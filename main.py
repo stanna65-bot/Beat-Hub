@@ -2,6 +2,22 @@ import os,secrets,threading,time,uuid,smtplib,ssl,re,sqlite3
 from datetime import datetime,timedelta,timezone,date,time as dtime
 from email.message import EmailMessage
 from pathlib import Path
+
+def load_local_env():
+    env_file=Path(__file__).resolve().parent/'.env'
+    if not env_file.is_file():
+        return
+    for raw in env_file.read_text(encoding='utf-8').splitlines():
+        line=raw.strip()
+        if not line or line.startswith('#') or '=' not in line:
+            continue
+        key,value=line.split('=',1)
+        key=key.strip(); value=value.strip()
+        if len(value)>=2 and value[0]==value[-1] and value[0] in ('"', "'"):
+            value=value[1:-1]
+        os.environ.setdefault(key,value)
+
+load_local_env()
 from fastapi import FastAPI,Request,Form,UploadFile,File,HTTPException,Depends
 from fastapi.responses import RedirectResponse,FileResponse,JSONResponse,Response
 from fastapi.staticfiles import StaticFiles
@@ -11,7 +27,10 @@ import auth,mpesa
 from database import get_db,init_db,unique_slug
 BASE=Path(__file__).resolve().parent; STATIC=BASE/'static'; COVERS=STATIC/'uploads/covers'; AUDIO=STATIC/'uploads/audio'
 for p in(COVERS,AUDIO):p.mkdir(parents=True,exist_ok=True)
-FEE_RATE=10; app=FastAPI(title='BeatHub - The Home of Beats'); app.add_middleware(SessionMiddleware,secret_key=os.getenv('SESSION_SECRET') or secrets.token_urlsafe(48),same_site='lax',https_only=os.getenv('SESSION_HTTPS_ONLY','false').lower()=='true');app.mount('/static',StaticFiles(directory=str(STATIC)),name='static');templates=Jinja2Templates(directory=str(BASE/'templates'));init_db()
+FEE_RATE=10
+SESSION_SECRET=os.getenv('SESSION_SECRET','').strip() or secrets.token_urlsafe(48)
+app=FastAPI(title='BeatHub - The Home of Beats')
+app.add_middleware(SessionMiddleware,secret_key=SESSION_SECRET,same_site='lax',https_only=os.getenv('SESSION_HTTPS_ONLY','false').lower()=='true');app.mount('/static',StaticFiles(directory=str(STATIC)),name='static');templates=Jinja2Templates(directory=str(BASE/'templates'));init_db()
 def render(n,r,**k):k.update(request=r,producer=auth.current_producer(r),super_admin=auth.is_super_admin(r));return templates.TemplateResponse(n,k)
 def now():return datetime.now(timezone.utc)
 def iso(dt):return dt.astimezone(timezone.utc).isoformat()
@@ -192,10 +211,19 @@ def withdraw(amount:int=Form(...),producer=Depends(auth.require_producer)):
     return RedirectResponse('/admin',303)
 
 def split(c,kind,id,producer_id,amount):
- fee=round(amount*FEE_RATE/100);net=amount-fee;res=c.execute('INSERT OR IGNORE INTO platform_ledger(source_type,source_id,gross_amount,platform_fee,producer_credit) VALUES(?,?,?,?,?)',(kind,id,amount,fee,net))
- if not res.rowcount:return
- ensure_wallet(c,producer_id);c.execute('UPDATE producer_wallets SET available_balance=available_balance+?,total_earnings=total_earnings+? WHERE producer_id=?',(net,net,producer_id));c.execute('UPDATE platform_wallet SET available_balance=available_balance+?,total_earnings=total_earnings+? WHERE id=1',(fee,fee))
- return fee,net
+    fee=(amount*FEE_RATE + 50)//100
+    net=amount-fee
+    res=c.execute(
+        'INSERT OR IGNORE INTO platform_ledger(source_type,source_id,gross_amount,platform_fee,producer_credit) VALUES(?,?,?,?,?)',
+        (kind,id,amount,fee,net)
+    )
+    if not res.rowcount:
+        existing=c.execute('SELECT platform_fee,producer_credit FROM platform_ledger WHERE source_type=? AND source_id=?',(kind,id)).fetchone()
+        return (existing['platform_fee'],existing['producer_credit']) if existing else None
+    ensure_wallet(c,producer_id)
+    c.execute('UPDATE producer_wallets SET available_balance=available_balance+?,total_earnings=total_earnings+?,updated_at=CURRENT_TIMESTAMP WHERE producer_id=?',(net,net,producer_id))
+    c.execute('UPDATE platform_wallet SET available_balance=available_balance+?,total_earnings=total_earnings+?,updated_at=CURRENT_TIMESTAMP WHERE id=1',(fee,fee))
+    return fee,net
 @app.post('/checkout/{beat_id}')
 def checkout(beat_id:int,phone:str=Form(...)):
     try: phone=mpesa.normalize_phone(phone)
@@ -352,9 +380,15 @@ def super_login_page(r:Request): return render('super_admin_login.html',r,error=
 
 @app.post('/super-admin/login')
 def super_login(r:Request,username:str=Form(...),password:str=Form(...)):
-    good=secrets.compare_digest(username,os.getenv('SUPER_ADMIN_USERNAME','admin')) and secrets.compare_digest(password,os.getenv('SUPER_ADMIN_PASSWORD',''))
-    if not good: return render('super_admin_login.html',r,error='Invalid credentials.')
-    r.session['super_admin']=True; return RedirectResponse('/super-admin',303)
+    configured_user=os.getenv('SUPER_ADMIN_USERNAME','').strip()
+    configured_password=os.getenv('SUPER_ADMIN_PASSWORD','')
+    if not configured_user or not configured_password:
+        return render('super_admin_login.html',r,error='Super Admin credentials are not configured.')
+    good=secrets.compare_digest(username.strip(),configured_user) and secrets.compare_digest(password,configured_password)
+    if not good:
+        return render('super_admin_login.html',r,error='Invalid credentials.')
+    r.session.clear(); r.session['super_admin']=True
+    return RedirectResponse('/super-admin',303)
 
 @app.post('/super-admin/logout')
 def super_logout(r:Request): r.session.pop('super_admin',None); return RedirectResponse('/',303)
@@ -366,7 +400,8 @@ def super_admin(r:Request):
         wallet=c.execute('SELECT * FROM platform_wallet WHERE id=1').fetchone()
         recent=c.execute("SELECT pl.*,CASE WHEN pl.source_type='beat' THEN b.title ELSE s.title END item_title,p.name producer_name FROM platform_ledger pl LEFT JOIN orders o ON pl.source_type='beat' AND pl.source_id=o.id LEFT JOIN beats b ON o.beat_id=b.id LEFT JOIN session_bookings sb ON pl.source_type='session' AND pl.source_id=sb.id LEFT JOIN session_services s ON sb.service_id=s.id LEFT JOIN producers p ON p.id=CASE WHEN pl.source_type='beat' THEN b.producer_id ELSE sb.producer_id END ORDER BY pl.created_at DESC LIMIT 100").fetchall()
         withdrawals=c.execute('SELECT * FROM platform_withdrawals ORDER BY requested_at DESC LIMIT 50').fetchall()
-        totals={'gross_sales':sum(x['gross_amount'] for x in recent),'platform_earnings':wallet['total_earnings'],'available_balance':wallet['available_balance'],'pending_withdrawal':wallet['pending_withdrawal'],'total_withdrawn':wallet['total_withdrawn']}
+        ledger_totals=c.execute('SELECT COALESCE(SUM(gross_amount),0) gross_sales FROM platform_ledger').fetchone()
+        totals={'gross_sales':ledger_totals['gross_sales'],'platform_earnings':wallet['total_earnings'],'available_balance':wallet['available_balance'],'pending_withdrawal':wallet['pending_withdrawal'],'total_withdrawn':wallet['total_withdrawn']}
     finally: c.close()
     return render('super_admin.html',r,wallet=wallet,totals=totals,recent=recent,withdrawals=withdrawals,payout_phone=admin_phone())
 
