@@ -1,7 +1,0 @@
-__pycache__/
-*.pyc
-.env
-beat_hub.db
-static/uploads/*
-!static/uploads/covers/
-!static/uploads/audio/
