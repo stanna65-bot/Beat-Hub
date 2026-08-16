@@ -4,19 +4,28 @@ import os
 import secrets
 
 from fastapi import HTTPException, Request
-
 from database import get_db
 
 
-ITERATIONS = 300_000
+ITERATIONS = int(
+    os.getenv(
+        "PASSWORD_HASH_ITERATIONS",
+        "300000"
+    )
+)
 
 
 def hash_password(password: str) -> str:
+    if not isinstance(password, str) or len(password) < 8:
+        raise ValueError(
+            "Password must be at least 8 characters."
+        )
+
     salt = os.urandom(16)
 
     digest = hashlib.pbkdf2_hmac(
         "sha256",
-        password.encode(),
+        password.encode("utf-8"),
         salt,
         ITERATIONS
     )
@@ -24,13 +33,16 @@ def hash_password(password: str) -> str:
     return f"{salt.hex()}${digest.hex()}"
 
 
-def verify_password(password: str, stored: str) -> bool:
+def verify_password(
+    password: str,
+    stored: str
+) -> bool:
     try:
         salt, digest = stored.split("$", 1)
 
         calculated = hashlib.pbkdf2_hmac(
             "sha256",
-            password.encode(),
+            password.encode("utf-8"),
             bytes.fromhex(salt),
             ITERATIONS
         ).hex()
@@ -45,7 +57,14 @@ def verify_password(password: str, stored: str) -> bool:
 
 
 def current_producer(request: Request):
-    producer_id = request.session.get("producer_id")
+    # A Super Admin session must never accidentally
+    # become a producer session.
+    if request.session.get("super_admin"):
+        return None
+
+    producer_id = request.session.get(
+        "producer_id"
+    )
 
     if not producer_id:
         return None
@@ -54,7 +73,11 @@ def current_producer(request: Request):
 
     try:
         return connection.execute(
-            "SELECT * FROM producers WHERE id=?",
+            """
+            SELECT *
+            FROM producers
+            WHERE id=?
+            """,
             (producer_id,)
         ).fetchone()
 
@@ -84,17 +107,17 @@ def require_super_admin(request: Request):
     if not is_super_admin(request):
         raise HTTPException(
             status_code=401,
-            detail="Super admin login required"
+            detail="Super Admin login required"
         )
 
     return True
 
 
-def new_token():
+def new_token() -> str:
     return secrets.token_urlsafe(32)
 
 
-def token_hash(token):
+def token_hash(token: str) -> str:
     return hashlib.sha256(
-        token.encode()
+        token.encode("utf-8")
     ).hexdigest()
