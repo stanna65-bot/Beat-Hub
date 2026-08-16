@@ -1,0 +1,9 @@
+beatstore.db
+static/uploads/covers/*
+static/uploads/audio/*
+!static/uploads/covers/.gitkeep
+!static/uploads/audio/.gitkeep
+__pycache__/
+*.pyc
+venv/
+.env
