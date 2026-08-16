@@ -1,1 +1,171 @@
-{% extends 'base.html' %}{% block body %}<main class="hero"><div class="muted" style="font:13px 'Space Mono'">KENYA'S BEAT MARKETPLACE</div><h1>SELL THE <span style="color:var(--gold)">SOUND.</span><br>KEEP YOUR <span style="color:var(--teal)">FLOW.</span></h1><p class="muted" style="font-size:18px;max-width:650px">A direct storefront for producers. Upload beats, sell through M-Pesa, offer creative sessions and track your net earnings.</p><div style="margin-top:30px"><a class="btn" href="/signup">Create your producer store</a> <a class="btn alt" href="/terms">Read the rules</a></div></main><section id="hot"><h2 style="font:36px 'Bebas Neue'">🔥 HOT PICKS</h2><div class="grid">{% for b in hot_beats %}<a class="card" href="/p/{{b.producer_slug}}/beat/{{b.id}}"><b>{{b.title}}</b><p class="muted">{{b.producer_name}} · {{b.genre}}{% if b.bpm %} · {{b.bpm}} BPM{% endif %}</p><div class="amount">KES {{b.price}}</div></a>{% else %}<p class="muted">Hot picks will appear here.</p>{% endfor %}</div></section><section id="sessions" style="margin-top:50px"><h2 style="font:36px 'Bebas Neue'">🎙️ BOOK A SESSION</h2><p class="muted">Choose a producer, select an available time and book your creative session.</p><div class="grid">{% for s in services %}<div class="card"><b>{{s.title}}</b><p class="muted">{{s.producer_name}} · {{s.duration_minutes}} minutes · {{s.location or 'Flexible location'}}</p><p>{{s.description}}</p><div class="amount">KES {{s.price}}</div><a class="btn" href="/sessions/{{s.id}}/book">Book Session</a></div>{% else %}<p class="muted">Producers can add session services from their dashboards.</p>{% endfor %}</div></section>{% endblock %}
+{% extends 'base.html' %}
+
+{% block body %}
+
+<main class="hero">
+
+    <div
+        class="muted"
+        style="font:13px 'Space Mono'"
+    >
+        THE HOME OF BEATS
+    </div>
+
+    <h1>
+        SELL THE
+        <span style="color:var(--gold)">
+            SOUND.
+        </span>
+        <br>
+
+        KEEP YOUR
+        <span style="color:var(--teal)">
+            FLOW.
+        </span>
+    </h1>
+
+    <p
+        class="muted"
+        style="font-size:18px;max-width:650px"
+    >
+        Discover beats, connect with producers,
+        book creative sessions, and build your sound.
+    </p>
+
+    <div style="margin-top:30px">
+
+        <a
+            class="btn"
+            href="/signup"
+        >
+            Create your producer store
+        </a>
+
+        <a
+            class="btn alt"
+            href="/terms"
+        >
+            Read the rules
+        </a>
+
+    </div>
+
+</main>
+
+
+<section id="hot">
+
+    <h2
+        style="font:36px 'Bebas Neue'"
+    >
+        🔥 HOT PICKS
+    </h2>
+
+    <div class="grid">
+
+        {% for b in hot_beats %}
+
+        <a
+            class="card"
+            href="/p/{{ b.producer_slug }}/beat/{{ b.id }}"
+        >
+
+            <b>
+                {{ b.title }}
+            </b>
+
+            <p class="muted">
+                {{ b.producer_name }}
+                ·
+                {{ b.genre }}
+
+                {% if b.bpm %}
+                    ·
+                    {{ b.bpm }} BPM
+                {% endif %}
+            </p>
+
+            <div class="amount">
+                KES {{ b.price }}
+            </div>
+
+        </a>
+
+        {% else %}
+
+        <p class="muted">
+            Hot picks will appear here.
+        </p>
+
+        {% endfor %}
+
+    </div>
+
+</section>
+
+
+<section
+    id="sessions"
+    style="margin-top:50px"
+>
+
+    <h2
+        style="font:36px 'Bebas Neue'"
+    >
+        🎙️ BOOK A SESSION
+    </h2>
+
+    <p class="muted">
+        Choose a producer, select an available
+        time and book your creative session.
+    </p>
+
+    <div class="grid">
+
+        {% for s in services %}
+
+        <div class="card">
+
+            <b>
+                {{ s.title }}
+            </b>
+
+            <p class="muted">
+                {{ s.producer_name }}
+                ·
+                {{ s.duration_minutes }} minutes
+                ·
+                {{ s.location or 'Flexible location' }}
+            </p>
+
+            <p>
+                {{ s.description }}
+            </p>
+
+            <div class="amount">
+                KES {{ s.price }}
+            </div>
+
+            <a
+                class="btn"
+                href="/sessions/{{ s.id }}/book"
+            >
+                Book Session
+            </a>
+
+        </div>
+
+        {% else %}
+
+        <p class="muted">
+            Producers can add session services
+            from their dashboards.
+        </p>
+
+        {% endfor %}
+
+    </div>
+
+</section>
+
+{% endblock %}
