@@ -1,0 +1,6 @@
+.venv/
+__pycache__/
+*.pyc
+beat_hub.db
+.env
+static/uploads/
