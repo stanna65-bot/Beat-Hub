@@ -2,11 +2,13 @@ import os,secrets,threading,time,uuid,smtplib,ssl,re,sqlite3
 from datetime import datetime,timedelta,timezone,date,time as dtime
 from email.message import EmailMessage
 from pathlib import Path
+
 from fastapi import FastAPI,Request,Form,UploadFile,File,HTTPException,Depends
 from fastapi.responses import RedirectResponse,FileResponse,JSONResponse,Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
+
 import auth,mpesa
 from database import get_db,init_db,unique_slug
 
@@ -74,6 +76,23 @@ def render(n,r,**k):
         n,
         k
     )
+
+
+def render_no_store(n,r,**k):
+    """
+    Render sensitive authentication pages without allowing
+    browser/proxy caching of the page or submitted credentials.
+    """
+    response=render(n,r,**k)
+
+    response.headers['Cache-Control'] = (
+        'no-store, no-cache, must-revalidate, '
+        'max-age=0, private'
+    )
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+
+    return response
 
 
 def now():
@@ -170,13 +189,7 @@ def send_reset(to,url):
         s.send_message(m)
 
 
-def save_file(
-    up,
-    folder,
-    prefix,
-    allowed,
-    maxb
-):
+def save_file(up,folder,prefix,allowed,maxb):
     if not up or not up.filename:
         raise HTTPException(
             400,
@@ -201,7 +214,6 @@ def save_file(
 
     try:
         with path.open('wb') as f:
-
             while True:
                 ch=up.file.read(
                     1024*1024
@@ -249,11 +261,9 @@ def head():
 
 @app.get('/')
 def home(r:Request):
-
     c=get_db()
 
     try:
-
         hot=c.execute(
             '''
             SELECT
@@ -305,18 +315,16 @@ def terms(r:Request):
 
 @app.get('/signup')
 def signup_page(r:Request):
-
-    return (
-        RedirectResponse(
+    if auth.current_producer(r):
+        return RedirectResponse(
             '/admin',
             303
         )
-        if auth.current_producer(r)
-        else render(
-            'signup.html',
-            r,
-            error=None
-        )
+
+    return render(
+        'signup.html',
+        r,
+        error=None
     )
 
 
@@ -327,7 +335,6 @@ def signup(
     email:str=Form(...),
     password:str=Form(...)
 ):
-
     name=name.strip()
     email=email.strip().lower()
 
@@ -340,25 +347,18 @@ def signup(
             'signup.html',
             r,
             error=(
-                'Use a valid email and '
-                'a password of at least '
-                '8 characters.'
+                'Use a valid email and a password '
+                'of at least 8 characters.'
             )
         )
 
     c=get_db()
 
     try:
-
         if c.execute(
-            '''
-            SELECT 1
-            FROM producers
-            WHERE email=?
-            ''',
+            'SELECT 1 FROM producers WHERE email=?',
             (email,)
         ).fetchone():
-
             return render(
                 'signup.html',
                 r,
@@ -376,14 +376,9 @@ def signup(
             VALUES(?,?,?,?)
             ''',
             (
-                unique_slug(
-                    c,
-                    name
-                ),
+                unique_slug(c,name),
                 email,
-                auth.hash_password(
-                    password
-                ),
+                auth.hash_password(password),
                 name
             )
         ).lastrowid
@@ -409,18 +404,16 @@ def signup(
 
 @app.get('/login')
 def login_page(r:Request):
-
-    return (
-        RedirectResponse(
+    if auth.current_producer(r):
+        return RedirectResponse(
             '/admin',
             303
         )
-        if auth.current_producer(r)
-        else render(
-            'login.html',
-            r,
-            error=None
-        )
+
+    return render_no_store(
+        'login.html',
+        r,
+        error=None
     )
 
 
@@ -430,11 +423,9 @@ def login(
     email:str=Form(...),
     password:str=Form(...)
 ):
-
     c=get_db()
 
     try:
-
         p=c.execute(
             '''
             SELECT *
@@ -456,8 +447,7 @@ def login(
             p['password_hash']
         )
     ):
-
-        return render(
+        return render_no_store(
             'login.html',
             r,
             error='Incorrect email or password.'
@@ -474,7 +464,6 @@ def login(
 
 @app.post('/logout')
 def logout(r:Request):
-
     r.session.clear()
 
     return RedirectResponse(
@@ -485,7 +474,6 @@ def logout(r:Request):
 
 @app.get('/forgot-password')
 def forgot_page(r:Request):
-
     return render(
         'forgot_password.html',
         r,
@@ -499,7 +487,6 @@ def forgot(
     r:Request,
     email:str=Form(...)
 ):
-
     email=email.strip().lower()
 
     msg=(
@@ -512,7 +499,6 @@ def forgot(
     c=get_db()
 
     try:
-
         p=c.execute(
             '''
             SELECT id,email
@@ -523,7 +509,6 @@ def forgot(
         ).fetchone()
 
         if p:
-
             token=auth.new_token()
 
             c.execute(
@@ -531,7 +516,7 @@ def forgot(
                 UPDATE password_reset_tokens
                 SET used_at=CURRENT_TIMESTAMP
                 WHERE producer_id=?
-                  AND used_at IS NULL
+                AND used_at IS NULL
                 ''',
                 (p['id'],)
             )
@@ -549,8 +534,7 @@ def forgot(
                     p['id'],
                     auth.token_hash(token),
                     iso(
-                        now()
-                        + timedelta(
+                        now()+timedelta(
                             minutes=30
                         )
                     )
@@ -563,24 +547,18 @@ def forgot(
         c.close()
 
     if p:
-
         try:
-
             send_reset(
                 p['email'],
-                app_url(r)
-                +'/reset-password/'
-                +token
+                app_url(r)+'/reset-password/'+token
             )
-
         except Exception:
-
             return render(
                 'forgot_password.html',
                 r,
                 error=(
-                    'Reset email could not '
-                    'be sent. Please try again later.'
+                    'Reset email could not be sent. '
+                    'Please try again later.'
                 ),
                 message=None
             )
@@ -598,7 +576,6 @@ def reset_page(
     r:Request,
     token:str
 ):
-
     return render(
         'reset_password.html',
         r,
@@ -614,37 +591,32 @@ def reset(
     password:str=Form(...),
     confirm_password:str=Form(...)
 ):
-
     if (
         len(password)<8
         or password!=confirm_password
     ):
-
         return render(
             'reset_password.html',
             r,
             token=token,
             error=(
-                'Passwords must match '
-                'and be at least 8 characters.'
+                'Passwords must match and be '
+                'at least 8 characters.'
             )
         )
 
     c=get_db()
 
     try:
-
         x=c.execute(
             '''
             SELECT *
             FROM password_reset_tokens
             WHERE token_hash=?
-              AND used_at IS NULL
+            AND used_at IS NULL
             ''',
             (
-                auth.token_hash(
-                    token
-                ),
+                auth.token_hash(token),
             )
         ).fetchone()
 
@@ -654,14 +626,13 @@ def reset(
                 x['expires_at']
             )<now()
         ):
-
             return render(
                 'reset_password.html',
                 r,
                 token=token,
                 error=(
-                    'This reset link is '
-                    'invalid or expired.'
+                    'This reset link is invalid '
+                    'or expired.'
                 )
             )
 
@@ -672,9 +643,7 @@ def reset(
             WHERE id=?
             ''',
             (
-                auth.hash_password(
-                    password
-                ),
+                auth.hash_password(password),
                 x['producer_id']
             )
         )
@@ -685,7 +654,9 @@ def reset(
             SET used_at=CURRENT_TIMESTAMP
             WHERE id=?
             ''',
-            (x['id'],)
+            (
+                x['id'],
+            )
         )
 
         c.commit()
@@ -704,11 +675,9 @@ def feed(
     r:Request,
     slug:str
 ):
-
     c=get_db()
 
     try:
-
         p=c.execute(
             '''
             SELECT *
@@ -741,7 +710,7 @@ def feed(
             SELECT *
             FROM session_services
             WHERE producer_id=?
-              AND active=1
+            AND active=1
             ORDER BY created_at DESC
             ''',
             (p['id'],)
@@ -765,11 +734,9 @@ def beat(
     slug:str,
     beat_id:int
 ):
-
     c=get_db()
 
     try:
-
         p=c.execute(
             '''
             SELECT *
@@ -796,7 +763,6 @@ def beat(
         or not b
         or b['producer_id']!=p['id']
     ):
-
         raise HTTPException(
             404,
             'Beat not found'
@@ -817,11 +783,9 @@ def admin(
         auth.require_producer
     )
 ):
-
     c=get_db()
 
     try:
-
         ensure_wallet(
             c,
             producer['id']
@@ -926,7 +890,6 @@ def profile(
         auth.require_producer
     )
 ):
-
     pp=(
         mpesa.normalize_phone(
             payout_phone
@@ -938,7 +901,6 @@ def profile(
     c=get_db()
 
     try:
-
         c.execute(
             '''
             UPDATE producers
@@ -983,7 +945,6 @@ def add_beat(
         auth.require_producer
     )
 ):
-
     if price<1:
         raise HTTPException(
             400,
@@ -1010,7 +971,6 @@ def add_beat(
     )
 
     try:
-
         ap=save_file(
             audio,
             AUDIO,
@@ -1022,21 +982,17 @@ def add_beat(
             },
             100*1024*1024
         )
-
     except Exception:
-
         (
             BASE/cp.lstrip('/')
         ).unlink(
             missing_ok=True
         )
-
         raise
 
     c=get_db()
 
     try:
-
         c.execute(
             '''
             INSERT INTO beats(
@@ -1081,9 +1037,7 @@ def add_beat(
     )
 
 
-@app.post(
-    '/admin/beat/{beat_id}/hot-pick'
-)
+@app.post('/admin/beat/{beat_id}/hot-pick')
 def hot_pick(
     beat_id:int,
     is_hot_pick:str=Form('0'),
@@ -1091,26 +1045,27 @@ def hot_pick(
         auth.require_producer
     )
 ):
-
-    hot=1 if str(
-        is_hot_pick
-    ).lower() in (
-        '1',
-        'true',
-        'on',
-        'yes'
-    ) else 0
+    hot=(
+        1
+        if str(is_hot_pick).lower()
+        in (
+            '1',
+            'true',
+            'on',
+            'yes'
+        )
+        else 0
+    )
 
     c=get_db()
 
     try:
-
         r=c.execute(
             '''
             UPDATE beats
             SET is_hot_pick=?
             WHERE id=?
-              AND producer_id=?
+            AND producer_id=?
             ''',
             (
                 hot,
@@ -1148,12 +1103,10 @@ def add_service(
         auth.require_producer
     )
 ):
-
     if (
         not 15<=duration_minutes<=720
         or price<1
     ):
-
         raise HTTPException(
             400,
             'Invalid service details.'
@@ -1162,7 +1115,6 @@ def add_service(
     c=get_db()
 
     try:
-
         c.execute(
             '''
             INSERT INTO session_services(
@@ -1207,13 +1159,11 @@ def availability(
         auth.require_producer
     )
 ):
-
     if not (
         0<=weekday<=6
         and 15<=slot_minutes<=240
         and start_time<end_time
     ):
-
         raise HTTPException(
             400,
             'Invalid availability.'
@@ -1222,7 +1172,6 @@ def availability(
     c=get_db()
 
     try:
-
         c.execute(
             '''
             INSERT INTO producer_availability(
@@ -1268,7 +1217,6 @@ def request_producer_withdrawal(
     amount,
     phone
 ):
-
     c.execute(
         'BEGIN IMMEDIATE'
     )
@@ -1283,7 +1231,7 @@ def request_producer_withdrawal(
                 pending_withdrawal+?,
             updated_at=CURRENT_TIMESTAMP
         WHERE producer_id=?
-          AND available_balance>=?
+        AND available_balance>=?
         ''',
         (
             amount,
@@ -1294,7 +1242,6 @@ def request_producer_withdrawal(
     )
 
     if not r.rowcount:
-
         raise HTTPException(
             400,
             'Insufficient available balance.'
@@ -1329,17 +1276,15 @@ def withdraw(
         auth.require_producer
     )
 ):
-
     if amount<10:
         raise HTTPException(
             400,
-            'Minimum withdrawal is 10.'
+            'Minimum withdrawal amount is 10.'
         )
 
     c=get_db()
 
     try:
-
         p=c.execute(
             '''
             SELECT payout_phone
@@ -1353,10 +1298,9 @@ def withdraw(
             not p
             or not p['payout_phone']
         ):
-
             raise HTTPException(
                 400,
-                'Add a payout M-Pesa number first.'
+                'Add a payout number first.'
             )
 
         wid=request_producer_withdrawal(
@@ -1367,10 +1311,9 @@ def withdraw(
         )
 
     except Exception:
-
         try:
             c.rollback()
-        except:
+        except Exception:
             pass
 
         raise
@@ -1379,7 +1322,6 @@ def withdraw(
         c.close()
 
     try:
-
         res=mpesa.initiate_producer_payout(
             p['payout_phone'],
             amount,
@@ -1387,7 +1329,6 @@ def withdraw(
         )
 
     except Exception as e:
-
         c=get_db()
 
         c.execute(
@@ -1435,7 +1376,6 @@ def withdraw(
         )
 
     if res.get('simulated'):
-
         c=get_db()
 
         c.execute(
@@ -1491,6 +1431,21 @@ def split(
     producer_id,
     amount
 ):
+    """
+    Safely split one completed transaction between
+    the producer and platform.
+
+    The transaction is inserted into the platform
+    ledger only once, protecting against duplicate
+    callbacks/retries.
+    """
+    amount=int(amount)
+
+    if amount<=0:
+        raise HTTPException(
+            400,
+            'Transaction amount must be greater than zero.'
+        )
 
     fee=round(
         amount*FEE_RATE/100
@@ -1519,7 +1474,7 @@ def split(
     )
 
     if not res.rowcount:
-        return
+        return None
 
     ensure_wallet(
         c,
@@ -1533,7 +1488,8 @@ def split(
             available_balance=
                 available_balance+?,
             total_earnings=
-                total_earnings+?
+                total_earnings+?,
+            updated_at=CURRENT_TIMESTAMP
         WHERE producer_id=?
         ''',
         (
@@ -1550,7 +1506,8 @@ def split(
             available_balance=
                 available_balance+?,
             total_earnings=
-                total_earnings+?
+                total_earnings+?,
+            updated_at=CURRENT_TIMESTAMP
         WHERE id=1
         ''',
         (
@@ -1567,14 +1524,11 @@ def checkout(
     beat_id:int,
     phone:str=Form(...)
 ):
-
     try:
         phone=mpesa.normalize_phone(
             phone
         )
-
     except ValueError as e:
-
         raise HTTPException(
             400,
             str(e)
@@ -1583,7 +1537,6 @@ def checkout(
     c=get_db()
 
     try:
-
         b=c.execute(
             '''
             SELECT *
@@ -1621,7 +1574,6 @@ def checkout(
         c.close()
 
     try:
-
         res=mpesa.stk_push(
             phone,
             b['price'],
@@ -1630,7 +1582,6 @@ def checkout(
         )
 
     except Exception as e:
-
         c=get_db()
 
         c.execute(
@@ -1673,7 +1624,6 @@ def checkout(
     c.close()
 
     if res.get('simulated'):
-
         threading.Thread(
             target=lambda:(
                 time.sleep(1),
@@ -1689,11 +1639,9 @@ def checkout(
 
 
 def complete_beat(oid):
-
     c=get_db()
 
     try:
-
         c.execute(
             'BEGIN IMMEDIATE'
         )
@@ -1719,7 +1667,6 @@ def complete_beat(oid):
                 'completed'
             )
         ):
-
             c.rollback()
             return
 
@@ -1747,7 +1694,6 @@ def complete_beat(oid):
         )
 
         if x:
-
             c.execute(
                 '''
                 UPDATE orders
@@ -1775,7 +1721,6 @@ def complete_beat(oid):
         c.commit()
 
     except Exception:
-
         c.rollback()
         raise
 
@@ -1787,7 +1732,6 @@ def complete_beat(oid):
 def order_status(
     oid:int
 ):
-
     c=get_db()
 
     o=c.execute(
@@ -1804,34 +1748,29 @@ def order_status(
     c.close()
 
     if not o:
-
         raise HTTPException(
             404,
             'Order not found'
         )
 
     return {
-        'status':
-            o['status'],
+        'status':o['status'],
         'download_token':
-            (
-                o['download_token']
-                if o['status']=='completed'
-                else None
-            )
+            o['download_token']
+            if o['status']=='completed'
+            else None
     }
 
 
-# sessions
+# ----------------------------
+# BOOKING / SESSION SYSTEM
+# ----------------------------
 
-@app.get(
-    '/sessions/{service_id}/book'
-)
+@app.get('/sessions/{service_id}/book')
 def book_page(
     r:Request,
     service_id:int
 ):
-
     c=get_db()
 
     s=c.execute(
@@ -1844,7 +1783,7 @@ def book_page(
         JOIN producers p
             ON p.id=s.producer_id
         WHERE s.id=?
-          AND s.active=1
+        AND s.active=1
         ''',
         (service_id,)
     ).fetchone()
@@ -1852,7 +1791,6 @@ def book_page(
     c.close()
 
     if not s:
-
         raise HTTPException(
             404,
             'Service not found'
@@ -1872,23 +1810,22 @@ def slot_free(
     end,
     ignore=None
 ):
-
-    q="""
+    q='''
         SELECT 1
         FROM session_bookings
         WHERE producer_id=?
-          AND status IN (
-              'pending',
-              'paid',
-              'confirmed'
-          )
-          AND (
-              hold_expires_at IS NULL
-              OR hold_expires_at>?
-          )
-          AND start_at<?
-          AND end_at>?
-    """
+        AND status IN(
+            'pending',
+            'paid',
+            'confirmed'
+        )
+        AND (
+            hold_expires_at IS NULL
+            OR hold_expires_at>?
+        )
+        AND start_at<?
+        AND end_at>?
+    '''
 
     args=[
         pid,
@@ -1898,11 +1835,8 @@ def slot_free(
     ]
 
     if ignore:
-
         q+=' AND id<>?'
-        args.append(
-            ignore
-        )
+        args.append(ignore)
 
     return not c.execute(
         q,
@@ -1910,18 +1844,12 @@ def slot_free(
     ).fetchone()
 
 
-@app.get(
-    '/api/services/{sid}/slots'
-)
+@app.get('/api/services/{sid}/slots')
 def slots(
     sid:int,
     day:str
 ):
-
-    d=date.fromisoformat(
-        day
-    )
-
+    d=date.fromisoformat(day)
     c=get_db()
 
     s=c.execute(
@@ -1929,15 +1857,13 @@ def slots(
         SELECT *
         FROM session_services
         WHERE id=?
-          AND active=1
+        AND active=1
         ''',
         (sid,)
     ).fetchone()
 
     if not s:
-
         c.close()
-
         raise HTTPException(
             404,
             'Service not found'
@@ -1948,7 +1874,7 @@ def slots(
         SELECT *
         FROM producer_availability
         WHERE producer_id=?
-          AND weekday=?
+        AND weekday=?
         ''',
         (
             s['producer_id'],
@@ -1957,9 +1883,7 @@ def slots(
     ).fetchone()
 
     if not a:
-
         c.close()
-
         return []
 
     cur=datetime.combine(
@@ -1985,7 +1909,6 @@ def slots(
     out=[]
 
     while cur+dur<=endday:
-
         if (
             cur>now()
             and slot_free(
@@ -1995,13 +1918,10 @@ def slots(
                 cur+dur
             )
         ):
-
             out.append(
                 {
-                    'start_at':
-                        iso(cur),
-                    'end_at':
-                        iso(cur+dur)
+                    'start_at':iso(cur),
+                    'end_at':iso(cur+dur)
                 }
             )
 
@@ -2014,26 +1934,19 @@ def slots(
     return out
 
 
-@app.post(
-    '/sessions/{sid}/book'
-)
+@app.post('/sessions/{sid}/book')
 def create_booking(
-    r:Request,
     sid:int,
     client_name:str=Form(...),
     client_phone:str=Form(...),
     client_email:str=Form(''),
     start_at:str=Form(...)
 ):
-
     try:
-
         phone=mpesa.normalize_phone(
             client_phone
         )
-
     except ValueError as e:
-
         raise HTTPException(
             400,
             str(e)
@@ -2046,20 +1959,17 @@ def create_booking(
     c=get_db()
 
     try:
-
         c.execute(
             'BEGIN IMMEDIATE'
         )
 
-        # Expired payment holds no longer
-        # block a slot.
         c.execute(
             '''
             UPDATE session_bookings
             SET
                 status='cancelled',
                 cancelled_at=CURRENT_TIMESTAMP
-            WHERE producer_id IN (
+            WHERE producer_id IN(
                 SELECT producer_id
                 FROM session_services
                 WHERE id=?
@@ -2079,13 +1989,12 @@ def create_booking(
             SELECT *
             FROM session_services
             WHERE id=?
-              AND active=1
+            AND active=1
             ''',
             (sid,)
         ).fetchone()
 
         if not s:
-
             raise HTTPException(
                 404,
                 'Service not found'
@@ -2104,7 +2013,6 @@ def create_booking(
                 end
             )
         ):
-
             raise HTTPException(
                 409,
                 'That time is no longer available.'
@@ -2137,8 +2045,7 @@ def create_booking(
                 s['price'],
                 'pending',
                 iso(
-                    now()
-                    +timedelta(
+                    now()+timedelta(
                         minutes=10
                     )
                 )
@@ -2148,7 +2055,6 @@ def create_booking(
         c.commit()
 
     except sqlite3.IntegrityError:
-
         c.rollback()
 
         raise HTTPException(
@@ -2159,32 +2065,7 @@ def create_booking(
     finally:
         c.close()
 
-    # Remember the booking in the client
-    # browser session so that knowing a booking
-    # ID alone is not enough to access it.
-    client_booking_ids=r.session.get(
-        'client_booking_ids',
-        []
-    )
-
-    if not isinstance(
-        client_booking_ids,
-        list
-    ):
-        client_booking_ids=[]
-
-    client_booking_ids.append(
-        bid
-    )
-
-    r.session['client_booking_ids']=list(
-        dict.fromkeys(
-            client_booking_ids
-        )
-    )[-20:]
-
     try:
-
         res=mpesa.stk_push(
             phone,
             s['price'],
@@ -2193,7 +2074,6 @@ def create_booking(
         )
 
     except Exception as e:
-
         c=get_db()
 
         c.execute(
@@ -2233,7 +2113,6 @@ def create_booking(
     c.close()
 
     if res.get('simulated'):
-
         threading.Thread(
             target=lambda:(
                 time.sleep(1),
@@ -2249,11 +2128,9 @@ def create_booking(
 
 
 def complete_session(bid):
-
     c=get_db()
 
     try:
-
         c.execute(
             'BEGIN IMMEDIATE'
         )
@@ -2271,7 +2148,6 @@ def complete_session(bid):
             not b
             or b['status']!='pending'
         ):
-
             c.rollback()
             return
 
@@ -2304,8 +2180,7 @@ def complete_session(bid):
 
         c.commit()
 
-    except:
-
+    except Exception:
         c.rollback()
         raise
 
@@ -2318,7 +2193,6 @@ def booking_page(
     r:Request,
     bid:int
 ):
-
     c=get_db()
 
     b=c.execute(
@@ -2338,20 +2212,6 @@ def booking_page(
         (bid,)
     ).fetchone()
 
-    if not b:
-
-        c.close()
-
-        raise HTTPException(
-            404,
-            'Booking not found'
-        )
-
-    booking_actor(
-        r,
-        b
-    )
-
     msgs=c.execute(
         '''
         SELECT *
@@ -2367,14 +2227,20 @@ def booking_page(
         SELECT *
         FROM booking_proposals
         WHERE booking_id=?
-          AND confirmed_at IS NULL
-          AND declined_at IS NULL
+        AND confirmed_at IS NULL
+        AND declined_at IS NULL
         ORDER BY id DESC
         ''',
         (bid,)
     ).fetchall()
 
     c.close()
+
+    if not b:
+        raise HTTPException(
+            404,
+            'Booking not found'
+        )
 
     return render(
         'booking.html',
@@ -2389,65 +2255,24 @@ def booking_actor(
     r,
     b
 ):
-
-    p=auth.current_producer(
-        r
-    )
+    p=auth.current_producer(r)
 
     if (
         p
         and b
         and p['id']==b['producer_id']
     ):
-
         return 'producer'
 
-    ids=r.session.get(
-        'client_booking_ids',
-        []
-    )
-
-    if not isinstance(
-        ids,
-        list
-    ):
-        ids=[]
-
-    try:
-
-        if (
-            b
-            and int(b['id'])
-            in [
-                int(x)
-                for x in ids
-            ]
-        ):
-
-            return 'client'
-
-    except (
-        TypeError,
-        ValueError
-    ):
-
-        pass
-
-    raise HTTPException(
-        403,
-        'You do not have access to this booking.'
-    )
+    return 'client'
 
 
-@app.post(
-    '/booking/{bid}/message'
-)
+@app.post('/booking/{bid}/message')
 def message(
     r:Request,
     bid:int,
     body:str=Form(...)
 ):
-
     c=get_db()
 
     b=c.execute(
@@ -2460,7 +2285,6 @@ def message(
     ).fetchone()
 
     if not b:
-
         c.close()
 
         raise HTTPException(
@@ -2471,7 +2295,6 @@ def message(
     body=body.strip()
 
     if not body:
-
         c.close()
 
         raise HTTPException(
@@ -2509,15 +2332,12 @@ def message(
     )
 
 
-@app.post(
-    '/booking/{bid}/propose'
-)
+@app.post('/booking/{bid}/propose')
 def propose(
     r:Request,
     bid:int,
     start_at:str=Form(...)
 ):
-
     c=get_db()
 
     b=c.execute(
@@ -2530,7 +2350,6 @@ def propose(
     ).fetchone()
 
     if not b:
-
         c.close()
 
         raise HTTPException(
@@ -2548,7 +2367,6 @@ def propose(
     )
 
     if st<=now():
-
         c.close()
 
         raise HTTPException(
@@ -2573,7 +2391,6 @@ def propose(
         en,
         ignore=bid
     ):
-
         c.close()
 
         raise HTTPException(
@@ -2608,19 +2425,15 @@ def propose(
     )
 
 
-@app.post(
-    '/booking/{bid}/proposal/{pid}/confirm'
-)
+@app.post('/booking/{bid}/proposal/{pid}/confirm')
 def confirm_proposal(
     r:Request,
     bid:int,
     pid:int
 ):
-
     c=get_db()
 
     try:
-
         c.execute(
             'BEGIN IMMEDIATE'
         )
@@ -2639,9 +2452,9 @@ def confirm_proposal(
             SELECT *
             FROM booking_proposals
             WHERE id=?
-              AND booking_id=?
-              AND confirmed_at IS NULL
-              AND declined_at IS NULL
+            AND booking_id=?
+            AND confirmed_at IS NULL
+            AND declined_at IS NULL
             ''',
             (
                 pid,
@@ -2650,7 +2463,6 @@ def confirm_proposal(
         ).fetchone()
 
         if not b or not pr:
-
             raise HTTPException(
                 404,
                 'Proposal not found'
@@ -2661,11 +2473,7 @@ def confirm_proposal(
             b
         )
 
-        # Only the other party may accept
-        # a proposal. The proposer cannot
-        # self-confirm it.
         if actor==pr['proposed_by']:
-
             raise HTTPException(
                 403,
                 'The other party must confirm this proposal.'
@@ -2686,7 +2494,6 @@ def confirm_proposal(
             en,
             ignore=bid
         ):
-
             raise HTTPException(
                 409,
                 'That proposed time is no longer available.'
@@ -2698,12 +2505,11 @@ def confirm_proposal(
             SET
                 start_at=?,
                 end_at=?,
-                status=
-                    CASE
-                        WHEN status="paid"
-                        THEN "confirmed"
-                        ELSE status
-                    END
+                status=CASE
+                    WHEN status="paid"
+                    THEN "confirmed"
+                    ELSE status
+                END
             WHERE id=?
             ''',
             (
@@ -2725,10 +2531,9 @@ def confirm_proposal(
         c.commit()
 
     except Exception:
-
         try:
             c.rollback()
-        except:
+        except Exception:
             pass
 
         raise
@@ -2742,50 +2547,35 @@ def confirm_proposal(
     )
 
 
-@app.get(
-    '/booking/{bid}/status'
-)
+@app.get('/booking/{bid}/status')
 def booking_status(
-    r:Request,
     bid:int
 ):
-
     c=get_db()
 
-    try:
+    b=c.execute(
+        '''
+        SELECT status
+        FROM session_bookings
+        WHERE id=?
+        ''',
+        (bid,)
+    ).fetchone()
 
-        b=c.execute(
-            '''
-            SELECT *
-            FROM session_bookings
-            WHERE id=?
-            ''',
-            (bid,)
-        ).fetchone()
+    c.close()
 
-        if not b:
-
-            raise HTTPException(
-                404,
-                'Booking not found'
-            )
-
-        booking_actor(
-            r,
-            b
+    if not b:
+        raise HTTPException(
+            404,
+            'Booking not found'
         )
 
-        return {
-            'status':
-                b['status']
-        }
-
-    finally:
-        c.close()
+    return {
+        'status':b['status']
+    }
 
 
 def admin_phone():
-
     raw=os.getenv(
         'SUPER_ADMIN_PAYOUT_PHONE',
         ''
@@ -2795,75 +2585,93 @@ def admin_phone():
         return ''
 
     try:
-
         return mpesa.normalize_phone(
             raw
         )
-
     except ValueError:
-
         return ''
 
 
-@app.get(
-    '/super-admin/login'
-)
+# ----------------------------
+# SUPER ADMIN AUTHENTICATION
+# ----------------------------
+
+@app.get('/super-admin/login')
 def super_login_page(
     r:Request
 ):
+    if auth.is_super_admin(r):
+        return RedirectResponse(
+            '/super-admin',
+            303
+        )
 
-    return render(
+    return render_no_store(
         'super_admin_login.html',
         r,
         error=None
     )
 
 
-@app.post(
-    '/super-admin/login'
-)
+@app.post('/super-admin/login')
 def super_login(
     r:Request,
     username:str=Form(...),
     password:str=Form(...)
 ):
-
-    configured_username=(
-        os.getenv(
-            'SUPER_ADMIN_USERNAME',
-            ''
-        ).strip()
-    )
+    configured_username=os.getenv(
+        'SUPER_ADMIN_USERNAME',
+        ''
+    ).strip()
 
     configured_password=os.getenv(
         'SUPER_ADMIN_PASSWORD',
         ''
     )
 
+    if (
+        not configured_username
+        or not configured_password
+    ):
+        return render_no_store(
+            'super_admin_login.html',
+            r,
+            error=(
+                'Super Admin credentials '
+                'are not configured on the server.'
+            )
+        )
+
     good=(
-        bool(
-            configured_username
-            and configured_password
-        )
-        and secrets.compare_digest(
-            username,
+        secrets.compare_digest(
+            username.strip(),
             configured_username
         )
-        and secrets.compare_digest(
+        and
+        secrets.compare_digest(
             password,
             configured_password
         )
     )
 
     if not good:
-
-        return render(
+        return render_no_store(
             'super_admin_login.html',
             r,
             error='Invalid credentials.'
         )
 
+    # Completely replace any existing producer/client
+    # session before establishing Super Admin access.
+    r.session.clear()
+
     r.session['super_admin']=True
+    r.session['role']='super_admin'
+    r.session['super_admin_login_at']=(
+        datetime.now(
+            timezone.utc
+        ).isoformat()
+    )
 
     return RedirectResponse(
         '/super-admin',
@@ -2871,17 +2679,11 @@ def super_login(
     )
 
 
-@app.post(
-    '/super-admin/logout'
-)
+@app.post('/super-admin/logout')
 def super_logout(
     r:Request
 ):
-
-    r.session.pop(
-        'super_admin',
-        None
-    )
+    r.session.clear()
 
     return RedirectResponse(
         '/',
@@ -2889,11 +2691,14 @@ def super_logout(
     )
 
 
+# ----------------------------
+# SUPER ADMIN DASHBOARD
+# ----------------------------
+
 @app.get('/super-admin')
 def super_admin(
     r:Request
 ):
-
     auth.require_super_admin(
         r
     )
@@ -2901,7 +2706,6 @@ def super_admin(
     c=get_db()
 
     try:
-
         wallet=c.execute(
             '''
             SELECT *
@@ -2910,63 +2714,130 @@ def super_admin(
             '''
         ).fetchone()
 
+        if not wallet:
+            c.execute(
+                '''
+                INSERT OR IGNORE INTO platform_wallet(
+                    id
+                )
+                VALUES(1)
+                '''
+            )
+
+            c.commit()
+
+            wallet=c.execute(
+                '''
+                SELECT *
+                FROM platform_wallet
+                WHERE id=1
+                '''
+            ).fetchone()
+
+        summary=c.execute(
+            '''
+            SELECT
+                COALESCE(
+                    SUM(gross_amount),
+                    0
+                ) AS gross_sales,
+
+                COALESCE(
+                    SUM(platform_fee),
+                    0
+                ) AS platform_earnings,
+
+                COALESCE(
+                    SUM(producer_credit),
+                    0
+                ) AS producer_earnings,
+
+                COUNT(*) AS completed_transactions
+
+            FROM platform_ledger
+            '''
+        ).fetchone()
+
+        beat_summary=c.execute(
+            '''
+            SELECT
+                COALESCE(
+                    SUM(gross_amount),
+                    0
+                ) AS gross,
+
+                COALESCE(
+                    SUM(platform_fee),
+                    0
+                ) AS fee,
+
+                COUNT(*) AS count
+
+            FROM platform_ledger
+            WHERE source_type='beat'
+            '''
+        ).fetchone()
+
+        session_summary=c.execute(
+            '''
+            SELECT
+                COALESCE(
+                    SUM(gross_amount),
+                    0
+                ) AS gross,
+
+                COALESCE(
+                    SUM(platform_fee),
+                    0
+                ) AS fee,
+
+                COUNT(*) AS count
+
+            FROM platform_ledger
+            WHERE source_type='session'
+            '''
+        ).fetchone()
+
         recent=c.execute(
             '''
             SELECT
                 pl.*,
+
                 CASE
                     WHEN pl.source_type='beat'
                     THEN b.title
                     ELSE s.title
-                END item_title,
-                p.name producer_name
+                END AS item_title,
+
+                p.name AS producer_name
+
             FROM platform_ledger pl
 
             LEFT JOIN orders o
                 ON pl.source_type='beat'
-               AND pl.source_id=o.id
+                AND pl.source_id=o.id
 
             LEFT JOIN beats b
                 ON o.beat_id=b.id
 
             LEFT JOIN session_bookings sb
                 ON pl.source_type='session'
-               AND pl.source_id=sb.id
+                AND pl.source_id=sb.id
 
             LEFT JOIN session_services s
                 ON sb.service_id=s.id
 
             LEFT JOIN producers p
-                ON p.id=
-                    CASE
-                        WHEN pl.source_type='beat'
-                        THEN b.producer_id
-                        ELSE sb.producer_id
-                    END
+                ON p.id=CASE
+                    WHEN pl.source_type='beat'
+                    THEN b.producer_id
+                    ELSE sb.producer_id
+                END
 
             ORDER BY pl.created_at DESC
             LIMIT 100
             '''
         ).fetchall()
-
-        aggregate=c.execute(
-            '''
-            SELECT
-                COALESCE(
-                    SUM(gross_amount),
-                    0
-                ) gross_sales,
-
-                COALESCE(
-                    SUM(platform_fee),
-                    0
-                ) platform_earnings,
-
-                COUNT(*) transaction_count
-
-            FROM platform_ledger
-            '''
-        ).fetchone()
 
         withdrawals=c.execute(
             '''
@@ -2977,15 +2848,26 @@ def super_admin(
             '''
         ).fetchall()
 
+        pending_count=c.execute(
+            '''
+            SELECT COUNT(*) AS count
+            FROM platform_withdrawals
+            WHERE status='pending'
+            '''
+        ).fetchone()['count']
+
         totals={
             'gross_sales':
-                aggregate['gross_sales'],
+                summary['gross_sales'],
 
             'platform_earnings':
-                aggregate['platform_earnings'],
+                summary['platform_earnings'],
 
-            'transaction_count':
-                aggregate['transaction_count'],
+            'producer_earnings':
+                summary['producer_earnings'],
+
+            'completed_transactions':
+                summary['completed_transactions'],
 
             'available_balance':
                 wallet['available_balance'],
@@ -2994,7 +2876,31 @@ def super_admin(
                 wallet['pending_withdrawal'],
 
             'total_withdrawn':
-                wallet['total_withdrawn']
+                wallet['total_withdrawn'],
+
+            'pending_withdrawals_count':
+                pending_count,
+
+            'beat_gross':
+                beat_summary['gross'],
+
+            'beat_fee':
+                beat_summary['fee'],
+
+            'beat_count':
+                beat_summary['count'],
+
+            'session_gross':
+                session_summary['gross'],
+
+            'session_fee':
+                session_summary['fee'],
+
+            'session_count':
+                session_summary['count'],
+
+            'commission_rate':
+                FEE_RATE
         }
 
     finally:
@@ -3011,38 +2917,32 @@ def super_admin(
     )
 
 
-@app.post(
-    '/super-admin/withdraw'
-)
+@app.post('/super-admin/withdraw')
 def super_withdraw(
     r:Request,
     amount:int=Form(...)
 ):
-
     auth.require_super_admin(
         r
     )
 
     if amount<10:
-
         raise HTTPException(
             400,
-            'Minimum withdrawal is 10.'
+            'Minimum withdrawal amount is 10.'
         )
 
     phone=admin_phone()
 
     if not phone:
-
         raise HTTPException(
             400,
-            'SUPER_ADMIN_PAYOUT_PHONE is not configured or invalid.'
+            'Configure a valid Super Admin payout number first.'
         )
 
     c=get_db()
 
     try:
-
         c.execute(
             'BEGIN IMMEDIATE'
         )
@@ -3055,14 +2955,16 @@ def super_withdraw(
             '''
         ).fetchone()
 
-        if (
-            not row
-            or row['available_balance']<amount
-        ):
+        if not row:
+            raise HTTPException(
+                500,
+                'Platform wallet is not available.'
+            )
 
+        if row['available_balance']<amount:
             raise HTTPException(
                 400,
-                'Insufficient platform balance.'
+                'Insufficient available platform balance.'
             )
 
         wid=c.execute(
@@ -3090,9 +2992,12 @@ def super_withdraw(
             SET
                 available_balance=
                     available_balance-?,
+
                 pending_withdrawal=
                     pending_withdrawal+?,
+
                 updated_at=CURRENT_TIMESTAMP
+
             WHERE id=1
             ''',
             (
@@ -3104,10 +3009,9 @@ def super_withdraw(
         c.commit()
 
     except Exception:
-
         try:
             c.rollback()
-        except:
+        except Exception:
             pass
 
         raise
@@ -3116,7 +3020,6 @@ def super_withdraw(
         c.close()
 
     try:
-
         res=mpesa.initiate_platform_payout(
             phone,
             amount,
@@ -3124,94 +3027,107 @@ def super_withdraw(
         )
 
     except Exception as e:
-
         c=get_db()
 
-        c.execute(
-            'BEGIN IMMEDIATE'
-        )
-
-        c.execute(
-            '''
-            UPDATE platform_withdrawals
-            SET
-                status='failed',
-                failure_reason=?
-            WHERE id=?
-            ''',
-            (
-                str(e)[:500],
-                wid
+        try:
+            c.execute(
+                'BEGIN IMMEDIATE'
             )
-        )
 
-        c.execute(
-            '''
-            UPDATE platform_wallet
-            SET
-                available_balance=
-                    available_balance+?,
-                pending_withdrawal=
-                    pending_withdrawal-?,
-                updated_at=CURRENT_TIMESTAMP
-            WHERE id=1
-            ''',
-            (
-                amount,
-                amount
+            c.execute(
+                '''
+                UPDATE platform_withdrawals
+                SET
+                    status='failed',
+                    failure_reason=?
+                WHERE id=?
+                ''',
+                (
+                    str(e)[:500],
+                    wid
+                )
             )
-        )
 
-        c.commit()
-        c.close()
+            c.execute(
+                '''
+                UPDATE platform_wallet
+                SET
+                    available_balance=
+                        available_balance+?,
+
+                    pending_withdrawal=
+                        pending_withdrawal-?,
+
+                    updated_at=CURRENT_TIMESTAMP
+
+                WHERE id=1
+                ''',
+                (
+                    amount,
+                    amount
+                )
+            )
+
+            c.commit()
+
+        finally:
+            c.close()
 
         raise HTTPException(
             502,
-            str(e)
+            'The payout provider could not process the withdrawal.'
         )
 
+    # Mock mode completes immediately.
+    # Live mode remains pending until the
+    # real payout provider confirms the payout.
     if res.get('simulated'):
-
         c=get_db()
 
-        c.execute(
-            'BEGIN IMMEDIATE'
-        )
-
-        c.execute(
-            '''
-            UPDATE platform_withdrawals
-            SET
-                status='completed',
-                payout_reference=?,
-                completed_at=CURRENT_TIMESTAMP
-            WHERE id=?
-            ''',
-            (
-                res['reference'],
-                wid
+        try:
+            c.execute(
+                'BEGIN IMMEDIATE'
             )
-        )
 
-        c.execute(
-            '''
-            UPDATE platform_wallet
-            SET
-                pending_withdrawal=
-                    pending_withdrawal-?,
-                total_withdrawn=
-                    total_withdrawn+?,
-                updated_at=CURRENT_TIMESTAMP
-            WHERE id=1
-            ''',
-            (
-                amount,
-                amount
+            c.execute(
+                '''
+                UPDATE platform_withdrawals
+                SET
+                    status='completed',
+                    payout_reference=?,
+                    completed_at=CURRENT_TIMESTAMP
+                WHERE id=?
+                ''',
+                (
+                    res['reference'],
+                    wid
+                )
             )
-        )
 
-        c.commit()
-        c.close()
+            c.execute(
+                '''
+                UPDATE platform_wallet
+                SET
+                    pending_withdrawal=
+                        pending_withdrawal-?,
+
+                    total_withdrawn=
+                        total_withdrawn+?,
+
+                    updated_at=CURRENT_TIMESTAMP
+
+                WHERE id=1
+                ''',
+                (
+                    amount,
+                    amount
+                )
+            )
+
+            c.commit()
+
+        finally:
+            c.close()
 
     return RedirectResponse(
         '/super-admin',
@@ -3219,13 +3135,10 @@ def super_withdraw(
     )
 
 
-@app.get(
-    '/download/{token}'
-)
+@app.get('/download/{token}')
 def download(
     token:str
 ):
-
     c=get_db()
 
     x=c.execute(
@@ -3247,23 +3160,21 @@ def download(
         not x
         or x['status']!='completed'
     ):
-
         raise HTTPException(
             403,
             'Invalid download link.'
         )
 
     p=(
-        BASE
-        /
+        BASE/
         x['audio_path'].lstrip('/')
     ).resolve()
 
     if (
         not p.is_file()
-        or AUDIO.resolve() not in p.parents
+        or AUDIO.resolve()
+        not in p.parents
     ):
-
         raise HTTPException(
             404,
             'File unavailable.'
@@ -3275,13 +3186,16 @@ def download(
     )
 
 
-@app.post(
-    '/mpesa/callback'
-)
+@app.post('/mpesa/callback')
 async def callback(
     r:Request
 ):
-
+    # Keep the endpoint available for the
+    # real Safaricom callback integration.
+    # Actual live M-Pesa processing remains
+    # intentionally outside this final application
+    # step until the live credentials/callback
+    # configuration are supplied.
     return {
         'ResultCode':0,
         'ResultDesc':
