@@ -2,16 +2,23 @@ import os
 import uuid
 
 
-def normalize_phone(phone):
+def normalize_phone(phone: str) -> str:
     digits = "".join(
-        x for x in (phone or "")
-        if x.isdigit()
+        character
+        for character in (phone or "")
+        if character.isdigit()
     )
 
-    if digits.startswith("0") and len(digits) == 10:
+    if (
+        digits.startswith("0")
+        and len(digits) == 10
+    ):
         digits = "254" + digits[1:]
 
-    elif digits.startswith("7") and len(digits) == 9:
+    elif (
+        digits.startswith("7")
+        and len(digits) == 9
+    ):
         digits = "254" + digits
 
     if not (
@@ -19,17 +26,17 @@ def normalize_phone(phone):
         and len(digits) == 12
     ):
         raise ValueError(
-            "Enter a valid payout phone number."
+            "Enter a valid M-Pesa payout number."
         )
 
     return digits
 
 
-def mode():
+def mode() -> str:
     return os.getenv(
         "MPESA_MODE",
         "mock"
-    ).lower()
+    ).strip().lower()
 
 
 def stk_push(
@@ -38,6 +45,17 @@ def stk_push(
     account_ref,
     description
 ):
+    """
+    Payment-provider adapter.
+
+    mock:
+        Allows complete application testing.
+
+    live:
+        Reserved for the real Safaricom Daraja
+        STK implementation.
+    """
+
     normalize_phone(phone)
 
     if mode() == "mock":
@@ -48,7 +66,7 @@ def stk_push(
         }
 
     raise RuntimeError(
-        "Live Safaricom Daraja integration is pending."
+        "Live M-Pesa STK integration is pending."
     )
 
 
@@ -57,6 +75,13 @@ def initiate_producer_payout(
     amount,
     reference
 ):
+    """
+    Producer withdrawal adapter.
+
+    Mock mode completes immediately so the wallet,
+    ledger and withdrawal logic can be tested.
+    """
+
     normalize_phone(phone)
 
     if mode() == "mock":
@@ -67,7 +92,7 @@ def initiate_producer_payout(
         }
 
     raise RuntimeError(
-        "Live Safaricom B2C integration is pending."
+        "Live M-Pesa B2C integration is pending."
     )
 
 
@@ -76,6 +101,13 @@ def initiate_platform_payout(
     amount,
     reference
 ):
+    """
+    Super Admin platform-wallet withdrawal.
+
+    The actual provider implementation will be
+    connected here during the final M-Pesa step.
+    """
+
     return initiate_producer_payout(
         phone,
         amount,
