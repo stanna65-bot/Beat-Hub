@@ -30,6 +30,12 @@ if not SESSION_SECRET:
           "Set SESSION_SECRET in your environment before deploying.")
 
 app.add_middleware(SessionMiddleware, secret_key=SESSION_SECRET, same_site="lax", https_only=os.getenv("SESSION_HTTPS_ONLY", "true").lower() == "true")
+
+# Ensure upload folders exist even if git didn't track them (empty dirs
+# aren't tracked by git, so a fresh clone/deploy can be missing these).
+(UPLOAD_DIR / "covers").mkdir(parents=True, exist_ok=True)
+(UPLOAD_DIR / "audio").mkdir(parents=True, exist_ok=True)
+
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
 
