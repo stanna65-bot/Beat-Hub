@@ -12,13 +12,13 @@ from fastapi import (
     Form,
     HTTPException,
     Request,
-    Response,
     UploadFile,
 )
 from fastapi.responses import (
     FileResponse,
     JSONResponse,
     RedirectResponse,
+    Response,
 )
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -27,16 +27,12 @@ from starlette.middleware.sessions import SessionMiddleware
 import auth
 import mpesa
 
-from database import (
-    get_db,
-    init_db,
-    unique_slug,
-)
+from database import get_db, init_db, unique_slug
 
 
-# ============================================================================
+# =============================================================================
 # PATHS
-# ============================================================================
+# =============================================================================
 
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -57,13 +53,13 @@ for directory in (
     directory.mkdir(parents=True, exist_ok=True)
 
 
-# ============================================================================
+# =============================================================================
 # PLATFORM SETTINGS
-# ============================================================================
+# =============================================================================
 
-# Internal platform business rule.
-# Producers do NOT edit this value and do NOT need to see this deduction
-# on their wallet dashboard.
+# Internal business rule.
+# This is applied automatically when a sale is completed.
+# The producer dashboard shows the producer's net earnings.
 PLATFORM_COMMISSION_RATE = 10.0
 
 MIN_PRICE = 1
@@ -91,9 +87,9 @@ ALLOWED_AUDIO_EXTENSIONS = {
 }
 
 
-# ============================================================================
-# APPLICATION
-# ============================================================================
+# =============================================================================
+# APP
+# =============================================================================
 
 app = FastAPI(
     title="Beat Hub",
@@ -101,9 +97,9 @@ app = FastAPI(
 )
 
 
-# ============================================================================
+# =============================================================================
 # SESSION
-# ============================================================================
+# =============================================================================
 
 SESSION_SECRET = os.getenv(
     "SESSION_SECRET",
@@ -114,57 +110,56 @@ if not SESSION_SECRET:
     SESSION_SECRET = secrets.token_urlsafe(48)
 
     print(
-        "WARNING: SESSION_SECRET is not configured. "
-        "Using a temporary session secret. "
+        "WARNING: SESSION_SECRET is not set. "
+        "A temporary secret is being used. "
         "Set SESSION_SECRET in Render environment variables."
     )
+
+SESSION_HTTPS_ONLY = (
+    os.getenv(
+        "SESSION_HTTPS_ONLY",
+        "true",
+    )
+    .strip()
+    .lower()
+    == "true"
+)
 
 app.add_middleware(
     SessionMiddleware,
     secret_key=SESSION_SECRET,
     same_site="lax",
-    https_only=(
-        os.getenv(
-            "SESSION_HTTPS_ONLY",
-            "false",
-        )
-        .strip()
-        .lower()
-        == "true"
-    ),
+    https_only=SESSION_HTTPS_ONLY,
 )
 
 
-# ============================================================================
-# STATIC FILES AND TEMPLATES
-# ============================================================================
+# =============================================================================
+# STATIC FILES / TEMPLATES
+# =============================================================================
 
 app.mount(
     "/static",
-    StaticFiles(directory=STATIC_DIR),
+    StaticFiles(directory=str(STATIC_DIR)),
     name="static",
 )
 
 templates = Jinja2Templates(
-    directory=TEMPLATES_DIR,
+    directory=str(TEMPLATES_DIR),
 )
 
 
-# ============================================================================
+# =============================================================================
 # DATABASE INITIALIZATION
-# ============================================================================
+# =============================================================================
 
 init_db()
 
 
-# ============================================================================
-# VALIDATION HELPERS
-# ============================================================================
+# =============================================================================
+# GENERAL HELPERS
+# =============================================================================
 
-def clean_text(
-    value: str,
-    max_length: int,
-) -> str:
+def clean_text(value, max_length):
     value = (value or "").strip()
 
     if len(value) > max_length:
@@ -179,23 +174,20 @@ def clean_text(
     return value
 
 
-def validate_price(price: int):
+def validate_price(price):
     if price is None:
         raise HTTPException(
             status_code=400,
             detail="Price is required.",
         )
 
-    if (
-        price < MIN_PRICE
-        or price > MAX_PRICE
-    ):
+    if price < MIN_PRICE or price > MAX_PRICE:
         raise HTTPException(
             status_code=400,
             detail=(
                 f"Price must be between "
-                f"KSh {MIN_PRICE:,} and "
-                f"KSh {MAX_PRICE:,}."
+                f"KES {MIN_PRICE:,} and "
+                f"KES {MAX_PRICE:,}."
             ),
         )
 
@@ -204,10 +196,7 @@ def validate_bpm(bpm):
     if bpm is None:
         return
 
-    if (
-        bpm < MIN_BPM
-        or bpm > MAX_BPM
-    ):
+    if bpm < MIN_BPM or bpm > MAX_BPM:
         raise HTTPException(
             status_code=400,
             detail=(
@@ -217,70 +206,60 @@ def validate_bpm(bpm):
         )
 
 
-# ============================================================================
-# UPLOAD HELPERS
-# ============================================================================
+# =============================================================================
+# FILE UPLOAD HELPERS
+# =============================================================================
 
-def safe_filename_extension(
-    filename: str,
-    allowed_extensions: set,
-) -> str:
+def safe_extension(filename, allowed_extensions):
     if not filename:
         raise HTTPException(
             status_code=400,
             detail="Uploaded file has no filename.",
         )
 
-    extension = Path(
-        filename
-    ).suffix.lower()
+    extension = Path(filename).suffix.lower()
 
     if extension not in allowed_extensions:
         raise HTTPException(
             status_code=400,
-            detail="This file type is not allowed.",
+            detail="File type is not allowed.",
         )
 
     return extension
 
 
 def save_upload(
-    upload: UploadFile,
-    subfolder: str,
-    allowed_extensions: set,
-    max_size: int,
-) -> str:
+    upload,
+    destination_dir,
+    public_prefix,
+    allowed_extensions,
+    max_size,
+):
+    if upload is None or not upload.filename:
+        raise HTTPException(
+            status_code=400,
+            detail="A file is required.",
+        )
 
-    extension = safe_filename_extension(
+    extension = safe_extension(
         upload.filename,
         allowed_extensions,
     )
 
-    if subfolder == "covers":
-        destination_dir = COVER_DIR
+    filename = f"{uuid.uuid4().hex}{extension}"
 
-    elif subfolder == "audio":
-        destination_dir = AUDIO_DIR
-
-    else:
-        raise HTTPException(
-            status_code=500,
-            detail="Invalid upload destination.",
-        )
-
-    filename = (
-        f"{uuid.uuid4().hex}{extension}"
+    destination_dir.mkdir(
+        parents=True,
+        exist_ok=True,
     )
 
     destination = (
         destination_dir / filename
     ).resolve()
 
-    destination_root = (
-        destination_dir.resolve()
-    )
+    destination_root = destination_dir.resolve()
 
-    if destination_root not in destination.parents:
+    if destination.parent != destination_root:
         raise HTTPException(
             status_code=400,
             detail="Invalid upload path.",
@@ -290,7 +269,6 @@ def save_upload(
 
     try:
         with destination.open("wb") as output:
-
             while True:
                 chunk = upload.file.read(
                     1024 * 1024
@@ -304,9 +282,7 @@ def save_upload(
                 if total_written > max_size:
                     raise HTTPException(
                         status_code=413,
-                        detail=(
-                            "Uploaded file is too large."
-                        ),
+                        detail="Uploaded file is too large.",
                     )
 
                 output.write(chunk)
@@ -320,9 +296,7 @@ def save_upload(
 
         raise HTTPException(
             status_code=500,
-            detail=(
-                "Could not save uploaded file."
-            ),
+            detail="Could not save uploaded file.",
         ) from exc
 
     finally:
@@ -331,28 +305,25 @@ def save_upload(
         except Exception:
             pass
 
-    return (
-        f"/static/uploads/"
-        f"{subfolder}/"
-        f"{filename}"
-    )
+    return f"{public_prefix}/{filename}"
 
 
-def delete_uploaded_path(
-    path_value: str,
-):
+def delete_uploaded_path(path_value):
     if not path_value:
         return
 
-    relative_path = path_value.lstrip("/")
+    relative = path_value.lstrip("/")
 
-    if not relative_path.startswith(
-        "static/uploads/"
-    ):
+    allowed_prefixes = (
+        "static/uploads/covers/",
+        "static/uploads/audio/",
+    )
+
+    if not relative.startswith(allowed_prefixes):
         return
 
     candidate = (
-        BASE_DIR / relative_path
+        BASE_DIR / relative
     ).resolve()
 
     uploads_root = UPLOAD_DIR.resolve()
@@ -361,28 +332,25 @@ def delete_uploaded_path(
         candidate.unlink(missing_ok=True)
 
 
-def get_safe_audio_file(
-    path_value: str,
-) -> Path:
-
+def get_safe_audio_file(path_value):
     if not path_value:
         raise HTTPException(
             status_code=404,
-            detail="File not found.",
+            detail="Audio file not found.",
         )
 
-    relative_path = path_value.lstrip("/")
+    relative = path_value.lstrip("/")
 
-    if not relative_path.startswith(
+    if not relative.startswith(
         "static/uploads/audio/"
     ):
         raise HTTPException(
             status_code=403,
-            detail="Invalid file path.",
+            detail="Invalid audio path.",
         )
 
     candidate = (
-        BASE_DIR / relative_path
+        BASE_DIR / relative
     ).resolve()
 
     audio_root = AUDIO_DIR.resolve()
@@ -390,26 +358,23 @@ def get_safe_audio_file(
     if audio_root not in candidate.parents:
         raise HTTPException(
             status_code=403,
-            detail="Invalid file path.",
+            detail="Invalid audio path.",
         )
 
     if not candidate.is_file():
         raise HTTPException(
             status_code=404,
-            detail="Purchased file is no longer available.",
+            detail="Audio file is unavailable.",
         )
 
     return candidate
 
 
-# ============================================================================
+# =============================================================================
 # WALLET HELPERS
-# ============================================================================
+# =============================================================================
 
-def ensure_wallet(
-    conn,
-    producer_id: int,
-):
+def ensure_wallet(conn, producer_id):
     conn.execute(
         """
         INSERT OR IGNORE INTO producer_wallets (
@@ -421,10 +386,7 @@ def ensure_wallet(
     )
 
 
-def get_wallet(
-    conn,
-    producer_id: int,
-):
+def get_wallet(conn, producer_id):
     ensure_wallet(conn, producer_id)
 
     return conn.execute(
@@ -437,321 +399,9 @@ def get_wallet(
     ).fetchone()
 
 
-# ============================================================================
-# NOTIFICATIONS
-# ============================================================================
-
-def notify_producer_sale(
-    producer,
-    amount: int,
-    beat_title: str,
-):
-    """
-    Producer receives NET earnings only.
-
-    Connect actual SMS/email providers here later.
-    """
-
-    sms_message = (
-        f"Beat Hub: You just made a sale! "
-        f"KSh {amount:,} has been added to your "
-        f"available balance for '{beat_title}'."
-    )
-
-    email_subject = (
-        "New Beat Sale - Earnings Added"
-    )
-
-    email_message = (
-        f"Congratulations! You made a sale for "
-        f"'{beat_title}'. KSh {amount:,} has been "
-        f"added to your available Beat Hub balance. "
-        f"You can withdraw your balance to M-Pesa."
-    )
-
-    print("\n[PRODUCER SALE NOTIFICATION]")
-    print(f"Producer ID: {producer['id']}")
-    print(f"SMS: {sms_message}")
-    print(f"EMAIL SUBJECT: {email_subject}")
-    print(f"EMAIL: {email_message}\n")
-
-
-def notify_admin_sale(
-    order_id: int,
-    gross_amount: int,
-    platform_fee: int,
-    producer_credit: int,
-):
-    """
-    Full financial breakdown remains internal.
-    """
-
-    print("\n[ADMIN SALE NOTIFICATION]")
-    print(f"Order ID: {order_id}")
-    print(f"Gross Sale: KSh {gross_amount:,}")
-    print(f"Platform Revenue: KSh {platform_fee:,}")
-    print(f"Producer Credit: KSh {producer_credit:,}\n")
-
-
-# ============================================================================
-# SAFE PAYMENT SPLIT
-# ============================================================================
-
-def apply_sale_once(
-    conn,
-    order_id: int,
-):
-    """
-    Financial safety rules:
-
-    - Completed order is split only once.
-    - Producer wallet is credited only once.
-    - Platform ledger receives one entry only.
-    - Duplicate callbacks cannot duplicate money.
-    """
-
-    order = conn.execute(
-        """
-        SELECT
-            orders.id,
-            orders.amount,
-            orders.status,
-            orders.split_applied_at,
-
-            beats.title AS beat_title,
-
-            producers.id AS producer_id,
-            producers.name AS producer_name,
-            producers.email AS producer_email,
-            producers.phone AS producer_phone
-
-        FROM orders
-
-        JOIN beats
-            ON beats.id = orders.beat_id
-
-        JOIN producers
-            ON producers.id = beats.producer_id
-
-        WHERE orders.id = ?
-        """,
-        (order_id,),
-    ).fetchone()
-
-    if not order:
-        return None
-
-    if order["status"] != "completed":
-        return None
-
-    if order["split_applied_at"] is not None:
-        return None
-
-    gross_amount = int(order["amount"])
-
-    platform_fee = round(
-        gross_amount
-        * PLATFORM_COMMISSION_RATE
-        / 100
-    )
-
-    producer_credit = (
-        gross_amount
-        - platform_fee
-    )
-
-    download_token = (
-        secrets.token_urlsafe(32)
-    )
-
-    # Lock the split first.
-    result = conn.execute(
-        """
-        UPDATE orders
-
-        SET
-            platform_fee = ?,
-
-            producer_payout = ?,
-
-            commission_rate_locked = ?,
-
-            download_token = ?,
-
-            split_applied_at = datetime('now')
-
-        WHERE
-            id = ?
-
-            AND status = 'completed'
-
-            AND split_applied_at IS NULL
-        """,
-        (
-            platform_fee,
-            producer_credit,
-            PLATFORM_COMMISSION_RATE,
-            download_token,
-            order_id,
-        ),
-    )
-
-    if result.rowcount != 1:
-        return None
-
-    producer_id = order["producer_id"]
-
-    ensure_wallet(
-        conn,
-        producer_id,
-    )
-
-    # Credit only NET earnings.
-    conn.execute(
-        """
-        UPDATE producer_wallets
-
-        SET
-            available_balance =
-                available_balance + ?,
-
-            total_earnings =
-                total_earnings + ?,
-
-            updated_at =
-                datetime('now')
-
-        WHERE producer_id = ?
-        """,
-        (
-            producer_credit,
-            producer_credit,
-            producer_id,
-        ),
-    )
-
-    # Producer wallet ledger.
-    conn.execute(
-        """
-        INSERT INTO wallet_transactions (
-            producer_id,
-            order_id,
-            transaction_type,
-            amount,
-            reference
-        )
-
-        VALUES (?, ?, ?, ?, ?)
-        """,
-        (
-            producer_id,
-            order_id,
-            "sale_credit",
-            producer_credit,
-            f"ORDER-{order_id}",
-        ),
-    )
-
-    # Internal platform accounting.
-    conn.execute(
-        """
-        INSERT OR IGNORE INTO platform_ledger (
-            order_id,
-            gross_amount,
-            platform_fee,
-            producer_credit
-        )
-
-        VALUES (?, ?, ?, ?)
-        """,
-        (
-            order_id,
-            gross_amount,
-            platform_fee,
-            producer_credit,
-        ),
-    )
-
-    return {
-        "producer_id": producer_id,
-        "producer_name": order["producer_name"],
-        "producer_email": order["producer_email"],
-        "producer_phone": order["producer_phone"],
-        "beat_title": order["beat_title"],
-        "gross_amount": gross_amount,
-        "platform_fee": platform_fee,
-        "producer_credit": producer_credit,
-    }
-
-
-def complete_order(
-    conn,
-    order_id: int,
-    receipt: str = None,
-):
-    conn.execute(
-        """
-        UPDATE orders
-
-        SET
-            status = 'completed',
-
-            mpesa_receipt =
-                COALESCE(?, mpesa_receipt),
-
-            completed_at =
-                COALESCE(
-                    completed_at,
-                    datetime('now')
-                ),
-
-            failure_reason = NULL
-
-        WHERE
-            id = ?
-
-            AND status IN ('pending', 'completed')
-        """,
-        (
-            receipt,
-            order_id,
-        ),
-    )
-
-    return apply_sale_once(
-        conn,
-        order_id,
-    )
-
-
-def fail_order(
-    conn,
-    order_id: int,
-    reason: str = "",
-):
-    conn.execute(
-        """
-        UPDATE orders
-
-        SET
-            status = 'failed',
-            failure_reason = ?
-
-        WHERE
-            id = ?
-
-            AND status = 'pending'
-        """,
-        (
-            reason[:500],
-            order_id,
-        ),
-    )
-
-
-# ============================================================================
-# RENDER HEALTH CHECK
-# ============================================================================
+# =============================================================================
+# HEALTH CHECK
+# =============================================================================
 
 @app.api_route(
     "/health",
@@ -759,12 +409,6 @@ def fail_order(
     include_in_schema=False,
 )
 def health():
-    """
-    Render health endpoint.
-
-    Supports BOTH GET and HEAD so Render does not receive 405.
-    """
-
     return Response(
         content="OK",
         status_code=200,
@@ -772,25 +416,25 @@ def health():
     )
 
 
-# Explicit HEAD route for root as additional protection.
-@app.head(
+@app.api_route(
     "/",
+    methods=["HEAD"],
     include_in_schema=False,
 )
 def root_head():
-    return Response(status_code=200)
+    return Response(
+        status_code=200,
+    )
 
 
-# ============================================================================
+# =============================================================================
 # HOME
-# ============================================================================
+# =============================================================================
 
 @app.get("/")
 def home(request: Request):
 
-    producer = auth.current_producer(
-        request
-    )
+    producer = auth.current_producer(request)
 
     return templates.TemplateResponse(
         "home.html",
@@ -801,9 +445,9 @@ def home(request: Request):
     )
 
 
-# ============================================================================
+# =============================================================================
 # SIGNUP
-# ============================================================================
+# =============================================================================
 
 @app.get("/signup")
 def signup_page(request: Request):
@@ -830,18 +474,13 @@ def signup(
     email: str = Form(...),
     password: str = Form(...),
 ):
-
     name = clean_text(name, 100)
     email = (email or "").strip().lower()
 
     if not name:
-        return templates.TemplateResponse(
-            "signup.html",
-            {
-                "request": request,
-                "error": "Name is required.",
-            },
+        raise HTTPException(
             status_code=400,
+            detail="Name is required.",
         )
 
     if (
@@ -849,26 +488,18 @@ def signup(
         or len(email) > 254
         or "@" not in email
     ):
-        return templates.TemplateResponse(
-            "signup.html",
-            {
-                "request": request,
-                "error": "Enter a valid email address.",
-            },
+        raise HTTPException(
             status_code=400,
+            detail="Enter a valid email address.",
         )
 
     if len(password or "") < 8:
-        return templates.TemplateResponse(
-            "signup.html",
-            {
-                "request": request,
-                "error": (
-                    "Password must be at least "
-                    "8 characters."
-                ),
-            },
+        raise HTTPException(
             status_code=400,
+            detail=(
+                "Password must be at least "
+                "8 characters."
+            ),
         )
 
     conn = get_db()
@@ -884,23 +515,15 @@ def signup(
         ).fetchone()
 
         if existing:
-            return templates.TemplateResponse(
-                "signup.html",
-                {
-                    "request": request,
-                    "error": (
-                        "An account with that email "
-                        "already exists."
-                    ),
-                },
-                status_code=400,
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "An account with this email "
+                    "already exists."
+                ),
             )
 
         slug = unique_slug(conn, name)
-
-        password_hash = auth.hash_password(
-            password
-        )
 
         cursor = conn.execute(
             """
@@ -910,13 +533,12 @@ def signup(
                 password_hash,
                 name
             )
-
             VALUES (?, ?, ?, ?)
             """,
             (
                 slug,
                 email,
-                password_hash,
+                auth.hash_password(password),
                 name,
             ),
         )
@@ -942,9 +564,9 @@ def signup(
     )
 
 
-# ============================================================================
-# LOGIN
-# ============================================================================
+# =============================================================================
+# LOGIN / LOGOUT
+# =============================================================================
 
 @app.get("/login")
 def login_page(request: Request):
@@ -970,7 +592,6 @@ def login(
     email: str = Form(...),
     password: str = Form(...),
 ):
-
     email = (email or "").strip().lower()
 
     conn = get_db()
@@ -1017,7 +638,6 @@ def login(
 
 @app.post("/logout")
 def logout(request: Request):
-
     request.session.clear()
 
     return RedirectResponse(
@@ -1026,16 +646,15 @@ def logout(request: Request):
     )
 
 
-# ============================================================================
-# PUBLIC PRODUCER PAGE
-# ============================================================================
+# =============================================================================
+# PRODUCER PUBLIC PAGE
+# =============================================================================
 
 @app.get("/p/{slug}")
-def feed(
+def producer_page(
     request: Request,
     slug: str,
 ):
-
     conn = get_db()
 
     try:
@@ -1058,9 +677,7 @@ def feed(
             """
             SELECT *
             FROM beats
-
             WHERE producer_id = ?
-
             ORDER BY
                 is_hot_pick DESC,
                 created_at DESC,
@@ -1088,7 +705,6 @@ def beat_detail(
     slug: str,
     beat_id: int,
 ):
-
     conn = get_db()
 
     try:
@@ -1111,7 +727,6 @@ def beat_detail(
             """
             SELECT *
             FROM beats
-
             WHERE
                 id = ?
                 AND producer_id = ?
@@ -1135,22 +750,21 @@ def beat_detail(
         "beat.html",
         {
             "request": request,
-            "beat": beat,
             "producer": producer,
+            "beat": beat,
         },
     )
 
 
-# ============================================================================
-# PRODUCER DASHBOARD
-# ============================================================================
+# =============================================================================
+# ADMIN DASHBOARD
+# =============================================================================
 
 @app.get("/admin")
 def admin_page(
     request: Request,
     producer=Depends(auth.require_producer),
 ):
-
     conn = get_db()
 
     try:
@@ -1165,9 +779,7 @@ def admin_page(
             """
             SELECT *
             FROM beats
-
             WHERE producer_id = ?
-
             ORDER BY
                 is_hot_pick DESC,
                 created_at DESC,
@@ -1181,6 +793,7 @@ def admin_page(
             SELECT
                 orders.id,
                 orders.status,
+                orders.amount,
                 orders.producer_payout,
                 orders.created_at,
                 orders.completed_at,
@@ -1206,17 +819,74 @@ def admin_page(
             """
             SELECT *
             FROM withdrawals
-
             WHERE producer_id = ?
-
             ORDER BY
                 requested_at DESC,
                 id DESC
-
             LIMIT 20
             """,
             (producer["id"],),
         ).fetchall()
+
+        sales_row = conn.execute(
+            """
+            SELECT
+                COUNT(*) AS total_sales
+            FROM orders
+
+            JOIN beats
+                ON beats.id = orders.beat_id
+
+            WHERE
+                beats.producer_id = ?
+                AND orders.status = 'completed'
+            """,
+            (producer["id"],),
+        ).fetchone()
+
+        earnings_row = conn.execute(
+            """
+            SELECT
+                COALESCE(
+                    SUM(producer_payout),
+                    0
+                ) AS total_earnings
+
+            FROM orders
+
+            JOIN beats
+                ON beats.id = orders.beat_id
+
+            WHERE
+                beats.producer_id = ?
+                AND orders.status = 'completed'
+            """,
+            (producer["id"],),
+        ).fetchone()
+
+        # IMPORTANT:
+        # totals is required by your existing admin.html.
+        totals = {
+            "total_sales": int(
+                sales_row["total_sales"] or 0
+            ),
+
+            "total_earnings": int(
+                earnings_row["total_earnings"] or 0
+            ),
+
+            "available_balance": int(
+                wallet["available_balance"] or 0
+            ),
+
+            "pending_withdrawal": int(
+                wallet["pending_withdrawal"] or 0
+            ),
+
+            "total_withdrawn": int(
+                wallet["total_withdrawn"] or 0
+            ),
+        }
 
         conn.commit()
 
@@ -1229,6 +899,7 @@ def admin_page(
             "request": request,
             "producer": producer,
             "wallet": wallet,
+            "totals": totals,
             "beats": beats,
             "orders": orders,
             "withdrawals": withdrawals,
@@ -1236,9 +907,9 @@ def admin_page(
     )
 
 
-# ============================================================================
-# PRODUCER PROFILE
-# ============================================================================
+# =============================================================================
+# UPDATE PROFILE
+# =============================================================================
 
 @app.post("/admin/profile")
 def update_profile(
@@ -1246,10 +917,8 @@ def update_profile(
     bio: str = Form(""),
     phone: str = Form(""),
     payout_phone: str = Form(""),
-    profile_photo: UploadFile = File(None),
     producer=Depends(auth.require_producer),
 ):
-
     name = clean_text(name, 100)
     bio = clean_text(bio, 2000)
     phone = clean_text(phone, 30)
@@ -1269,74 +938,33 @@ def update_profile(
             payout_phone = mpesa.normalize_phone(
                 payout_phone
             )
-
-        except mpesa.MpesaError as exc:
+        except Exception as exc:
             raise HTTPException(
                 status_code=400,
                 detail=str(exc),
             ) from exc
 
-    photo_path = None
-
-    if (
-        profile_photo
-        and profile_photo.filename
-    ):
-        photo_path = save_upload(
-            profile_photo,
-            "covers",
-            ALLOWED_COVER_EXTENSIONS,
-            MAX_COVER_SIZE,
-        )
-
     conn = get_db()
 
     try:
-        if photo_path:
-            conn.execute(
-                """
-                UPDATE producers
-
-                SET
-                    name = ?,
-                    bio = ?,
-                    phone = ?,
-                    payout_phone = ?,
-                    profile_photo = ?
-
-                WHERE id = ?
-                """,
-                (
-                    name,
-                    bio,
-                    phone,
-                    payout_phone,
-                    photo_path,
-                    producer["id"],
-                ),
-            )
-
-        else:
-            conn.execute(
-                """
-                UPDATE producers
-
-                SET
-                    name = ?,
-                    bio = ?,
-                    phone = ?,
-                    payout_phone = ?
-
-                WHERE id = ?
-                """,
-                (
-                    name,
-                    bio,
-                    phone,
-                    payout_phone,
-                    producer["id"],
-                ),
-            )
+        conn.execute(
+            """
+            UPDATE producers
+            SET
+                name = ?,
+                bio = ?,
+                phone = ?,
+                payout_phone = ?
+            WHERE id = ?
+            """,
+            (
+                name,
+                bio,
+                phone,
+                payout_phone,
+                producer["id"],
+            ),
+        )
 
         conn.commit()
 
@@ -1349,9 +977,9 @@ def update_profile(
     )
 
 
-# ============================================================================
+# =============================================================================
 # UPLOAD BEAT
-# ============================================================================
+# =============================================================================
 
 @app.post("/admin/beat")
 def upload_beat(
@@ -1364,7 +992,6 @@ def upload_beat(
     audio: UploadFile = File(...),
     producer=Depends(auth.require_producer),
 ):
-
     title = clean_text(title, 200)
     genre = clean_text(genre, 100)
 
@@ -1378,9 +1005,7 @@ def upload_beat(
     validate_bpm(bpm)
 
     hot_pick = (
-        str(is_hot_pick)
-        .strip()
-        .lower()
+        str(is_hot_pick).strip().lower()
         in {"1", "true", "yes", "on"}
     )
 
@@ -1390,14 +1015,16 @@ def upload_beat(
     try:
         cover_path = save_upload(
             cover,
-            "covers",
+            COVER_DIR,
+            "/static/uploads/covers",
             ALLOWED_COVER_EXTENSIONS,
             MAX_COVER_SIZE,
         )
 
         audio_path = save_upload(
             audio,
-            "audio",
+            AUDIO_DIR,
+            "/static/uploads/audio",
             ALLOWED_AUDIO_EXTENSIONS,
             MAX_AUDIO_SIZE,
         )
@@ -1417,7 +1044,6 @@ def upload_beat(
                     audio_path,
                     is_hot_pick
                 )
-
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
@@ -1439,14 +1065,10 @@ def upload_beat(
 
     except Exception:
         if cover_path:
-            delete_uploaded_path(
-                cover_path
-            )
+            delete_uploaded_path(cover_path)
 
         if audio_path:
-            delete_uploaded_path(
-                audio_path
-            )
+            delete_uploaded_path(audio_path)
 
         raise
 
@@ -1456,9 +1078,9 @@ def upload_beat(
     )
 
 
-# ============================================================================
+# =============================================================================
 # HOT PICK
-# ============================================================================
+# =============================================================================
 
 @app.post("/admin/beat/{beat_id}/hot-pick")
 def toggle_hot_pick(
@@ -1466,11 +1088,8 @@ def toggle_hot_pick(
     is_hot_pick: str = Form("0"),
     producer=Depends(auth.require_producer),
 ):
-
-    value = (
-        str(is_hot_pick)
-        .strip()
-        .lower()
+    hot_pick = (
+        str(is_hot_pick).strip().lower()
         in {"1", "true", "yes", "on"}
     )
 
@@ -1480,15 +1099,13 @@ def toggle_hot_pick(
         result = conn.execute(
             """
             UPDATE beats
-
             SET is_hot_pick = ?
-
             WHERE
                 id = ?
                 AND producer_id = ?
             """,
             (
-                int(value),
+                int(hot_pick),
                 beat_id,
                 producer["id"],
             ),
@@ -1511,16 +1128,15 @@ def toggle_hot_pick(
     )
 
 
-# ============================================================================
+# =============================================================================
 # DELETE BEAT
-# ============================================================================
+# =============================================================================
 
 @app.post("/admin/beat/{beat_id}/delete")
 def delete_beat(
     beat_id: int,
     producer=Depends(auth.require_producer),
 ):
-
     conn = get_db()
 
     try:
@@ -1528,7 +1144,6 @@ def delete_beat(
             """
             SELECT *
             FROM beats
-
             WHERE
                 id = ?
                 AND producer_id = ?
@@ -1545,23 +1160,21 @@ def delete_beat(
                 detail="Beat not found.",
             )
 
-        order_exists = conn.execute(
+        purchase_exists = conn.execute(
             """
             SELECT 1
             FROM orders
-
             WHERE beat_id = ?
-
             LIMIT 1
             """,
             (beat_id,),
         ).fetchone()
 
-        if order_exists:
+        if purchase_exists:
             raise HTTPException(
                 status_code=409,
                 detail=(
-                    "This beat has purchase records "
+                    "This beat has order records "
                     "and cannot be deleted."
                 ),
             )
@@ -1569,15 +1182,9 @@ def delete_beat(
         conn.execute(
             """
             DELETE FROM beats
-
-            WHERE
-                id = ?
-                AND producer_id = ?
+            WHERE id = ?
             """,
-            (
-                beat_id,
-                producer["id"],
-            ),
+            (beat_id,),
         )
 
         conn.commit()
@@ -1599,31 +1206,237 @@ def delete_beat(
     )
 
 
-# ============================================================================
+# =============================================================================
+# PAYMENT SPLIT
+# =============================================================================
+
+def apply_sale_once(
+    conn,
+    order_id,
+):
+    order = conn.execute(
+        """
+        SELECT
+            orders.*,
+            beats.title AS beat_title,
+            beats.producer_id,
+
+            producers.name AS producer_name,
+            producers.email AS producer_email,
+            producers.phone AS producer_phone
+
+        FROM orders
+
+        JOIN beats
+            ON beats.id = orders.beat_id
+
+        JOIN producers
+            ON producers.id = beats.producer_id
+
+        WHERE orders.id = ?
+        """,
+        (order_id,),
+    ).fetchone()
+
+    if not order:
+        return None
+
+    if order["status"] != "completed":
+        return None
+
+    if order["split_applied_at"] is not None:
+        return None
+
+    gross_amount = int(order["amount"])
+
+    platform_fee = round(
+        gross_amount
+        * PLATFORM_COMMISSION_RATE
+        / 100
+    )
+
+    producer_payout = (
+        gross_amount
+        - platform_fee
+    )
+
+    download_token = secrets.token_urlsafe(32)
+
+    locked = conn.execute(
+        """
+        UPDATE orders
+        SET
+            platform_fee = ?,
+            producer_payout = ?,
+            commission_rate_locked = ?,
+            download_token = ?,
+            split_applied_at = datetime('now')
+        WHERE
+            id = ?
+            AND status = 'completed'
+            AND split_applied_at IS NULL
+        """,
+        (
+            platform_fee,
+            producer_payout,
+            PLATFORM_COMMISSION_RATE,
+            download_token,
+            order_id,
+        ),
+    )
+
+    if locked.rowcount != 1:
+        return None
+
+    producer_id = order["producer_id"]
+
+    ensure_wallet(
+        conn,
+        producer_id,
+    )
+
+    conn.execute(
+        """
+        UPDATE producer_wallets
+        SET
+            available_balance =
+                available_balance + ?,
+            total_earnings =
+                total_earnings + ?,
+            updated_at = datetime('now')
+        WHERE producer_id = ?
+        """,
+        (
+            producer_payout,
+            producer_payout,
+            producer_id,
+        ),
+    )
+
+    conn.execute(
+        """
+        INSERT INTO wallet_transactions (
+            producer_id,
+            order_id,
+            transaction_type,
+            amount,
+            reference
+        )
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (
+            producer_id,
+            order_id,
+            "sale_credit",
+            producer_payout,
+            f"ORDER-{order_id}",
+        ),
+    )
+
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO platform_ledger (
+            order_id,
+            gross_amount,
+            platform_fee,
+            producer_credit
+        )
+        VALUES (?, ?, ?, ?)
+        """,
+        (
+            order_id,
+            gross_amount,
+            platform_fee,
+            producer_payout,
+        ),
+    )
+
+    return {
+        "producer_id": producer_id,
+        "producer_name": order["producer_name"],
+        "producer_email": order["producer_email"],
+        "producer_phone": order["producer_phone"],
+        "beat_title": order["beat_title"],
+        "gross_amount": gross_amount,
+        "platform_fee": platform_fee,
+        "producer_payout": producer_payout,
+    }
+
+
+def complete_order(
+    conn,
+    order_id,
+    receipt=None,
+):
+    conn.execute(
+        """
+        UPDATE orders
+        SET
+            status = 'completed',
+            mpesa_receipt =
+                COALESCE(?, mpesa_receipt),
+            completed_at =
+                COALESCE(
+                    completed_at,
+                    datetime('now')
+                ),
+            failure_reason = NULL
+        WHERE
+            id = ?
+            AND status IN ('pending', 'completed')
+        """,
+        (
+            receipt,
+            order_id,
+        ),
+    )
+
+    return apply_sale_once(
+        conn,
+        order_id,
+    )
+
+
+def fail_order(
+    conn,
+    order_id,
+    reason,
+):
+    conn.execute(
+        """
+        UPDATE orders
+        SET
+            status = 'failed',
+            failure_reason = ?
+        WHERE
+            id = ?
+            AND status = 'pending'
+        """,
+        (
+            (reason or "")[:500],
+            order_id,
+        ),
+    )
+
+
+# =============================================================================
 # CHECKOUT
-# ============================================================================
+# =============================================================================
 
 @app.post("/checkout/{beat_id}")
 def checkout(
     beat_id: int,
     phone: str = Form(...),
 ):
-
     try:
-        normalized_phone = mpesa.normalize_phone(
-            phone
-        )
-
-    except mpesa.MpesaError as exc:
+        normalized_phone = mpesa.normalize_phone(phone)
+    except Exception as exc:
         raise HTTPException(
             status_code=400,
             detail=str(exc),
         ) from exc
 
     conn = get_db()
-
-    order_id = None
-    beat = None
 
     try:
         beat = conn.execute(
@@ -1642,7 +1455,6 @@ def checkout(
             )
 
         amount = int(beat["price"])
-
         validate_price(amount)
 
         cursor = conn.execute(
@@ -1653,7 +1465,6 @@ def checkout(
                 amount,
                 status
             )
-
             VALUES (?, ?, ?, 'pending')
             """,
             (
@@ -1664,7 +1475,6 @@ def checkout(
         )
 
         order_id = cursor.lastrowid
-
         conn.commit()
 
     finally:
@@ -1677,9 +1487,7 @@ def checkout(
             account_ref=f"BEAT{beat_id}",
             description=beat["title"],
         )
-
-    except mpesa.MpesaError as exc:
-
+    except Exception as exc:
         conn = get_db()
 
         try:
@@ -1688,9 +1496,7 @@ def checkout(
                 order_id,
                 str(exc),
             )
-
             conn.commit()
-
         finally:
             conn.close()
 
@@ -1704,37 +1510,33 @@ def checkout(
     )
 
     if not checkout_request_id:
-
         conn = get_db()
 
         try:
             fail_order(
                 conn,
                 order_id,
-                "M-Pesa returned no checkout request ID.",
+                "No checkout request ID returned.",
             )
-
             conn.commit()
-
         finally:
             conn.close()
 
         raise HTTPException(
             status_code=502,
             detail=(
-                "M-Pesa STK Push could not be initiated."
+                "M-Pesa STK Push could not "
+                "be initiated."
             ),
         )
 
     conn = get_db()
 
     try:
-        updated = conn.execute(
+        conn.execute(
             """
             UPDATE orders
-
             SET checkout_request_id = ?
-
             WHERE
                 id = ?
                 AND status = 'pending'
@@ -1745,17 +1547,6 @@ def checkout(
             ),
         )
 
-        if updated.rowcount != 1:
-            conn.rollback()
-
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    "Payment order could not be "
-                    "updated safely."
-                ),
-            )
-
         conn.commit()
 
     finally:
@@ -1763,7 +1554,7 @@ def checkout(
 
     if result.get("simulated"):
         threading.Thread(
-            target=_simulate_confirm,
+            target=simulate_confirm,
             args=(order_id,),
             daemon=True,
         ).start()
@@ -1776,23 +1567,20 @@ def checkout(
     )
 
 
-# ============================================================================
-# SIMULATED PAYMENT CONFIRMATION
-# ============================================================================
+# =============================================================================
+# SIMULATED PAYMENT
+# =============================================================================
 
-def _simulate_confirm(order_id: int):
-
+def simulate_confirm(order_id):
     time.sleep(3)
-
-    notification_data = None
 
     conn = get_db()
 
     try:
-        notification_data = complete_order(
+        complete_order(
             conn,
             order_id,
-            receipt=f"SIM{order_id}RECEIPT",
+            f"SIM-{order_id}",
         )
 
         conn.commit()
@@ -1800,42 +1588,13 @@ def _simulate_confirm(order_id: int):
     finally:
         conn.close()
 
-    if notification_data:
 
-        producer = {
-            "id": notification_data["producer_id"],
-            "name": notification_data["producer_name"],
-            "email": notification_data["producer_email"],
-            "phone": notification_data["producer_phone"],
-        }
-
-        try:
-            notify_producer_sale(
-                producer,
-                notification_data["producer_credit"],
-                notification_data["beat_title"],
-            )
-
-            notify_admin_sale(
-                order_id,
-                notification_data["gross_amount"],
-                notification_data["platform_fee"],
-                notification_data["producer_credit"],
-            )
-
-        except Exception as exc:
-            print(
-                f"Notification error: {exc}"
-            )
-
-
-# ============================================================================
-# ORDER STATUS
-# ============================================================================
+# =============================================================================
+# PAYMENT STATUS
+# =============================================================================
 
 @app.get("/order/{order_id}/status")
 def order_status(order_id: int):
-
     conn = get_db()
 
     try:
@@ -1845,9 +1604,7 @@ def order_status(order_id: int):
                 id,
                 status,
                 download_token
-
             FROM orders
-
             WHERE id = ?
             """,
             (order_id,),
@@ -1862,35 +1619,32 @@ def order_status(order_id: int):
             detail="Order not found.",
         )
 
-    response = {
-        "status": order["status"],
+    result = {
         "order_id": order["id"],
+        "status": order["status"],
     }
 
     if (
         order["status"] == "completed"
         and order["download_token"]
     ):
-        response["download_token"] = (
+        result["download_token"] = (
             order["download_token"]
         )
 
-    return response
+    return result
 
 
-# ============================================================================
+# =============================================================================
 # M-PESA CALLBACK
-# ============================================================================
+# =============================================================================
 
 @app.post("/mpesa/callback")
 async def mpesa_callback(request: Request):
-
     try:
         payload = await request.json()
 
-        callback = (
-            payload["Body"]["stkCallback"]
-        )
+        callback = payload["Body"]["stkCallback"]
 
         checkout_id = callback[
             "CheckoutRequestID"
@@ -1900,7 +1654,7 @@ async def mpesa_callback(request: Request):
             callback["ResultCode"]
         )
 
-        result_description = str(
+        result_desc = str(
             callback.get(
                 "ResultDesc",
                 "",
@@ -1915,7 +1669,7 @@ async def mpesa_callback(request: Request):
 
     receipt = None
 
-    metadata = (
+    for item in (
         callback.get(
             "CallbackMetadata",
             {},
@@ -1923,18 +1677,13 @@ async def mpesa_callback(request: Request):
             "Item",
             [],
         )
-    )
-
-    for item in metadata:
+    ):
         if (
             item.get("Name")
             == "MpesaReceiptNumber"
         ):
             receipt = item.get("Value")
             break
-
-    notification_data = None
-    order_id = None
 
     conn = get_db()
 
@@ -1943,7 +1692,6 @@ async def mpesa_callback(request: Request):
             """
             SELECT id
             FROM orders
-
             WHERE checkout_request_id = ?
             """,
             (checkout_id,),
@@ -1957,22 +1705,17 @@ async def mpesa_callback(request: Request):
                 "ResultDesc": "Accepted",
             }
 
-        order_id = order["id"]
-
         if result_code == 0:
-
-            notification_data = complete_order(
+            complete_order(
                 conn,
-                order_id,
-                receipt=receipt,
+                order["id"],
+                receipt,
             )
-
         else:
-
             fail_order(
                 conn,
-                order_id,
-                result_description,
+                order["id"],
+                result_desc,
             )
 
         conn.commit()
@@ -1980,147 +1723,87 @@ async def mpesa_callback(request: Request):
     finally:
         conn.close()
 
-    if notification_data:
-
-        producer = {
-            "id": notification_data["producer_id"],
-            "name": notification_data["producer_name"],
-            "email": notification_data["producer_email"],
-            "phone": notification_data["producer_phone"],
-        }
-
-        try:
-            notify_producer_sale(
-                producer,
-                notification_data["producer_credit"],
-                notification_data["beat_title"],
-            )
-
-            notify_admin_sale(
-                order_id,
-                notification_data["gross_amount"],
-                notification_data["platform_fee"],
-                notification_data["producer_credit"],
-            )
-
-        except Exception as exc:
-            print(
-                f"Notification error: {exc}"
-            )
-
     return {
         "ResultCode": 0,
         "ResultDesc": "Accepted",
     }
 
 
-# ============================================================================
-# WITHDRAWAL
-# ============================================================================
+# =============================================================================
+# REQUEST WITHDRAWAL
+# =============================================================================
 
 @app.post("/admin/withdraw")
 def request_withdrawal(
     amount: int = Form(...),
     producer=Depends(auth.require_producer),
 ):
-
     if amount < MIN_WITHDRAWAL:
         raise HTTPException(
             status_code=400,
             detail=(
                 f"Minimum withdrawal is "
-                f"KSh {MIN_WITHDRAWAL:,}."
+                f"KES {MIN_WITHDRAWAL:,}."
             ),
         )
 
     conn = get_db()
 
-    withdrawal_id = None
-    payout_phone = None
-
     try:
         producer_row = conn.execute(
             """
-            SELECT
-                id,
-                payout_phone
-
+            SELECT payout_phone
             FROM producers
-
             WHERE id = ?
             """,
             (producer["id"],),
         ).fetchone()
 
-        if not producer_row:
-            raise HTTPException(
-                status_code=404,
-                detail="Producer not found.",
-            )
-
         payout_phone = (
             producer_row["payout_phone"]
-            or ""
-        ).strip()
+            if producer_row
+            else ""
+        )
 
         if not payout_phone:
             raise HTTPException(
                 status_code=400,
                 detail=(
                     "Add your M-Pesa payout phone "
-                    "number before withdrawing."
+                    "number first."
                 ),
             )
 
-        ensure_wallet(
+        conn.execute("BEGIN IMMEDIATE")
+
+        wallet = get_wallet(
             conn,
             producer["id"],
         )
 
-        # Prevent two simultaneous withdrawal requests
-        # from spending the same balance.
-        conn.execute("BEGIN IMMEDIATE")
-
-        wallet = conn.execute(
-            """
-            SELECT *
-            FROM producer_wallets
-
-            WHERE producer_id = ?
-            """,
-            (producer["id"],),
-        ).fetchone()
-
         if (
             not wallet
-            or wallet["available_balance"] < amount
+            or int(wallet["available_balance"])
+            < amount
         ):
             conn.rollback()
 
             raise HTTPException(
                 status_code=400,
-                detail=(
-                    "Insufficient available balance."
-                ),
+                detail="Insufficient balance.",
             )
 
         updated = conn.execute(
             """
             UPDATE producer_wallets
-
             SET
                 available_balance =
                     available_balance - ?,
-
                 pending_withdrawal =
                     pending_withdrawal + ?,
-
-                updated_at =
-                    datetime('now')
-
+                updated_at = datetime('now')
             WHERE
                 producer_id = ?
-
                 AND available_balance >= ?
             """,
             (
@@ -2137,7 +1820,7 @@ def request_withdrawal(
             raise HTTPException(
                 status_code=409,
                 detail=(
-                    "Your balance changed. "
+                    "Balance changed. "
                     "Please try again."
                 ),
             )
@@ -2150,7 +1833,6 @@ def request_withdrawal(
                 phone,
                 status
             )
-
             VALUES (?, ?, ?, 'processing')
             """,
             (
@@ -2171,7 +1853,6 @@ def request_withdrawal(
                 amount,
                 reference
             )
-
             VALUES (?, ?, ?, ?, ?)
             """,
             (
@@ -2197,17 +1878,14 @@ def request_withdrawal(
         conn.close()
 
     try:
-        payout_result = (
-            mpesa.initiate_producer_payout(
-                phone=payout_phone,
-                amount=amount,
-                reference=f"WD{withdrawal_id}",
-            )
+        result = mpesa.initiate_producer_payout(
+            phone=payout_phone,
+            amount=amount,
+            reference=f"WD{withdrawal_id}",
         )
 
-    except mpesa.MpesaError as exc:
-
-        _return_failed_withdrawal(
+    except Exception as exc:
+        return_failed_withdrawal(
             withdrawal_id,
             producer["id"],
             amount,
@@ -2219,15 +1897,12 @@ def request_withdrawal(
             detail=str(exc),
         ) from exc
 
-    # Simulation mode only completes immediately.
-    # Live M-Pesa should complete after confirmed B2C callback.
-    if payout_result.get("simulated"):
-
-        _complete_withdrawal(
+    if result.get("simulated"):
+        complete_withdrawal(
             withdrawal_id,
             producer["id"],
             amount,
-            payout_result.get("reference"),
+            result.get("reference"),
         )
 
     return RedirectResponse(
@@ -2236,55 +1911,34 @@ def request_withdrawal(
     )
 
 
-# ============================================================================
+# =============================================================================
 # COMPLETE WITHDRAWAL
-# ============================================================================
+# =============================================================================
 
-def _complete_withdrawal(
-    withdrawal_id: int,
-    producer_id: int,
-    amount: int,
-    payout_reference: str = None,
+def complete_withdrawal(
+    withdrawal_id,
+    producer_id,
+    amount,
+    reference=None,
 ):
-
     conn = get_db()
 
     try:
         conn.execute("BEGIN IMMEDIATE")
 
-        withdrawal = conn.execute(
-            """
-            SELECT *
-            FROM withdrawals
-
-            WHERE id = ?
-            """,
-            (withdrawal_id,),
-        ).fetchone()
-
-        if not withdrawal:
-            conn.rollback()
-            return False
-
-        if withdrawal["status"] != "processing":
-            conn.rollback()
-            return False
-
         updated = conn.execute(
             """
             UPDATE withdrawals
-
             SET
                 status = 'completed',
                 payout_reference = ?,
                 completed_at = datetime('now')
-
             WHERE
                 id = ?
                 AND status = 'processing'
             """,
             (
-                payout_reference,
+                reference,
                 withdrawal_id,
             ),
         )
@@ -2296,7 +1950,6 @@ def _complete_withdrawal(
         conn.execute(
             """
             UPDATE producer_wallets
-
             SET
                 pending_withdrawal =
                     CASE
@@ -2304,13 +1957,9 @@ def _complete_withdrawal(
                         THEN pending_withdrawal - ?
                         ELSE 0
                     END,
-
                 total_withdrawn =
                     total_withdrawn + ?,
-
-                updated_at =
-                    datetime('now')
-
+                updated_at = datetime('now')
             WHERE producer_id = ?
             """,
             (
@@ -2330,7 +1979,6 @@ def _complete_withdrawal(
                 amount,
                 reference
             )
-
             VALUES (?, ?, ?, ?, ?)
             """,
             (
@@ -2338,12 +1986,11 @@ def _complete_withdrawal(
                 withdrawal_id,
                 "withdrawal_completed",
                 amount,
-                payout_reference,
+                reference,
             ),
         )
 
         conn.commit()
-
         return True
 
     except Exception:
@@ -2354,54 +2001,33 @@ def _complete_withdrawal(
         conn.close()
 
 
-# ============================================================================
-# FAILED WITHDRAWAL
-# ============================================================================
+# =============================================================================
+# RETURN FAILED WITHDRAWAL MONEY
+# =============================================================================
 
-def _return_failed_withdrawal(
-    withdrawal_id: int,
-    producer_id: int,
-    amount: int,
-    reason: str,
+def return_failed_withdrawal(
+    withdrawal_id,
+    producer_id,
+    amount,
+    reason,
 ):
-
     conn = get_db()
 
     try:
         conn.execute("BEGIN IMMEDIATE")
 
-        withdrawal = conn.execute(
-            """
-            SELECT *
-            FROM withdrawals
-
-            WHERE id = ?
-            """,
-            (withdrawal_id,),
-        ).fetchone()
-
-        if not withdrawal:
-            conn.rollback()
-            return False
-
-        if withdrawal["status"] != "processing":
-            conn.rollback()
-            return False
-
         updated = conn.execute(
             """
             UPDATE withdrawals
-
             SET
                 status = 'failed',
                 failure_reason = ?
-
             WHERE
                 id = ?
                 AND status = 'processing'
             """,
             (
-                reason[:500],
+                (reason or "")[:500],
                 withdrawal_id,
             ),
         )
@@ -2413,21 +2039,16 @@ def _return_failed_withdrawal(
         conn.execute(
             """
             UPDATE producer_wallets
-
             SET
                 available_balance =
                     available_balance + ?,
-
                 pending_withdrawal =
                     CASE
                         WHEN pending_withdrawal >= ?
                         THEN pending_withdrawal - ?
                         ELSE 0
                     END,
-
-                updated_at =
-                    datetime('now')
-
+                updated_at = datetime('now')
             WHERE producer_id = ?
             """,
             (
@@ -2447,7 +2068,6 @@ def _return_failed_withdrawal(
                 amount,
                 reference
             )
-
             VALUES (?, ?, ?, ?, ?)
             """,
             (
@@ -2460,7 +2080,6 @@ def _return_failed_withdrawal(
         )
 
         conn.commit()
-
         return True
 
     except Exception:
@@ -2471,17 +2090,13 @@ def _return_failed_withdrawal(
         conn.close()
 
 
-# ============================================================================
+# =============================================================================
 # PROTECTED DOWNLOAD
-# ============================================================================
+# =============================================================================
 
 @app.get("/download/{token}")
 def download(token: str):
-
-    if (
-        not token
-        or len(token) < 20
-    ):
+    if not token or len(token) < 20:
         raise HTTPException(
             status_code=403,
             detail="Invalid download link.",
@@ -2531,9 +2146,15 @@ def download(token: str):
         ".m4a": "audio/mp4",
     }
 
+    safe_name = (
+        row["title"]
+        .replace("/", "-")
+        .replace("\\", "-")
+    )
+
     return FileResponse(
-        file_path,
-        filename=f"{row['title']}{extension}",
+        path=str(file_path),
+        filename=f"{safe_name}{extension}",
         media_type=media_types.get(
             extension,
             "application/octet-stream",
