@@ -1,47 +1,514 @@
-import sqlite3,re
-from pathlib import Path
-BASE_DIR=Path(__file__).resolve().parent; DB_PATH=BASE_DIR/'beat_hub.db'
-def get_db():
- c=sqlite3.connect(DB_PATH,timeout=30,isolation_level=None); c.row_factory=sqlite3.Row; c.execute('PRAGMA foreign_keys=ON'); c.execute('PRAGMA journal_mode=WAL'); return c
-def _add(c,t,col,typ):
- cols={x['name'] for x in c.execute(f'PRAGMA table_info({t})')}
- if col not in cols:c.execute(f'ALTER TABLE {t} ADD COLUMN {col} {typ}')
-def init_db():
-    conn=get_db()
-    # Core tables. The schema is intentionally additive so an existing BeatHub database
-    # can be upgraded without destroying producers, beats, orders or wallet balances.
-    conn.executescript("""
-    CREATE TABLE IF NOT EXISTS producers(id INTEGER PRIMARY KEY AUTOINCREMENT,slug TEXT UNIQUE NOT NULL,email TEXT UNIQUE NOT NULL,password_hash TEXT NOT NULL,name TEXT NOT NULL,bio TEXT NOT NULL DEFAULT '',phone TEXT NOT NULL DEFAULT '',payout_phone TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
-    CREATE TABLE IF NOT EXISTS beats(id INTEGER PRIMARY KEY AUTOINCREMENT,producer_id INTEGER NOT NULL REFERENCES producers(id) ON DELETE CASCADE,title TEXT NOT NULL,genre TEXT NOT NULL DEFAULT '',bpm INTEGER,price INTEGER NOT NULL CHECK(price>0),cover_path TEXT NOT NULL,audio_path TEXT NOT NULL,is_hot_pick INTEGER NOT NULL DEFAULT 0,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
-    CREATE TABLE IF NOT EXISTS orders(id INTEGER PRIMARY KEY AUTOINCREMENT,beat_id INTEGER NOT NULL REFERENCES beats(id),buyer_phone TEXT NOT NULL,amount INTEGER NOT NULL,status TEXT NOT NULL DEFAULT 'pending',checkout_request_id TEXT UNIQUE,mpesa_receipt TEXT,platform_fee INTEGER NOT NULL DEFAULT 0,producer_payout INTEGER NOT NULL DEFAULT 0,commission_rate_locked REAL,split_applied_at TEXT,download_token TEXT UNIQUE,failure_reason TEXT,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,completed_at TEXT);
-    CREATE TABLE IF NOT EXISTS producer_wallets(producer_id INTEGER PRIMARY KEY REFERENCES producers(id) ON DELETE CASCADE,available_balance INTEGER NOT NULL DEFAULT 0,pending_withdrawal INTEGER NOT NULL DEFAULT 0,total_earnings INTEGER NOT NULL DEFAULT 0,total_withdrawn INTEGER NOT NULL DEFAULT 0,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
-    CREATE TABLE IF NOT EXISTS withdrawals(id INTEGER PRIMARY KEY AUTOINCREMENT,producer_id INTEGER NOT NULL REFERENCES producers(id),amount INTEGER NOT NULL,phone TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'pending',payout_reference TEXT,failure_reason TEXT,requested_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,completed_at TEXT);
-    CREATE TABLE IF NOT EXISTS platform_ledger(id INTEGER PRIMARY KEY AUTOINCREMENT,source_type TEXT NOT NULL DEFAULT 'beat',source_id INTEGER NOT NULL,gross_amount INTEGER NOT NULL,platform_fee INTEGER NOT NULL,producer_credit INTEGER NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,UNIQUE(source_type,source_id));
-    CREATE TABLE IF NOT EXISTS platform_wallet(id INTEGER PRIMARY KEY CHECK(id=1),available_balance INTEGER NOT NULL DEFAULT 0,pending_withdrawal INTEGER NOT NULL DEFAULT 0,total_earnings INTEGER NOT NULL DEFAULT 0,total_withdrawn INTEGER NOT NULL DEFAULT 0,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
-    INSERT OR IGNORE INTO platform_wallet(id) VALUES(1);
-    CREATE TABLE IF NOT EXISTS platform_withdrawals(id INTEGER PRIMARY KEY AUTOINCREMENT,amount INTEGER NOT NULL,phone TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'pending',payout_reference TEXT,failure_reason TEXT,requested_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,completed_at TEXT);
-    CREATE TABLE IF NOT EXISTS password_reset_tokens(id INTEGER PRIMARY KEY AUTOINCREMENT,producer_id INTEGER NOT NULL REFERENCES producers(id) ON DELETE CASCADE,token_hash TEXT NOT NULL UNIQUE,expires_at TEXT NOT NULL,used_at TEXT,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
-    CREATE TABLE IF NOT EXISTS session_services(id INTEGER PRIMARY KEY AUTOINCREMENT,producer_id INTEGER NOT NULL REFERENCES producers(id) ON DELETE CASCADE,title TEXT NOT NULL,description TEXT NOT NULL DEFAULT '',duration_minutes INTEGER NOT NULL CHECK(duration_minutes BETWEEN 15 AND 720),price INTEGER NOT NULL CHECK(price>0),location TEXT NOT NULL DEFAULT '',active INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
-    CREATE TABLE IF NOT EXISTS producer_availability(id INTEGER PRIMARY KEY AUTOINCREMENT,producer_id INTEGER NOT NULL REFERENCES producers(id) ON DELETE CASCADE,weekday INTEGER NOT NULL CHECK(weekday BETWEEN 0 AND 6),start_time TEXT NOT NULL,end_time TEXT NOT NULL,slot_minutes INTEGER NOT NULL DEFAULT 60 CHECK(slot_minutes BETWEEN 15 AND 240),UNIQUE(producer_id,weekday));
-    CREATE TABLE IF NOT EXISTS session_bookings(id INTEGER PRIMARY KEY AUTOINCREMENT,producer_id INTEGER NOT NULL REFERENCES producers(id),service_id INTEGER NOT NULL REFERENCES session_services(id),client_name TEXT NOT NULL,client_phone TEXT NOT NULL,client_email TEXT NOT NULL DEFAULT '',start_at TEXT NOT NULL,end_at TEXT NOT NULL,amount INTEGER NOT NULL,status TEXT NOT NULL DEFAULT 'pending',checkout_request_id TEXT UNIQUE,mpesa_receipt TEXT,platform_fee INTEGER NOT NULL DEFAULT 0,producer_payout INTEGER NOT NULL DEFAULT 0,split_applied_at TEXT,hold_expires_at TEXT,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,paid_at TEXT,cancelled_at TEXT,UNIQUE(producer_id,start_at));
-    CREATE TABLE IF NOT EXISTS booking_messages(id INTEGER PRIMARY KEY AUTOINCREMENT,booking_id INTEGER NOT NULL REFERENCES session_bookings(id) ON DELETE CASCADE,sender_role TEXT NOT NULL CHECK(sender_role IN ('client','producer')),body TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
-    CREATE TABLE IF NOT EXISTS booking_proposals(id INTEGER PRIMARY KEY AUTOINCREMENT,booking_id INTEGER NOT NULL REFERENCES session_bookings(id) ON DELETE CASCADE,proposed_start_at TEXT NOT NULL,proposed_end_at TEXT NOT NULL,proposed_by TEXT NOT NULL,confirmed_at TEXT,declined_at TEXT,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
-    CREATE INDEX IF NOT EXISTS idx_bookings_producer_start ON session_bookings(producer_id,start_at);
-    """)
-    # Older releases used platform_ledger(order_id,...). Migrate that ledger to the
-    # source_type/source_id format so beat and session revenue share one accounting path.
-    cols={r["name"] for r in conn.execute("PRAGMA table_info(platform_ledger)")}
-    if cols and "source_type" not in cols:
-        conn.execute("ALTER TABLE platform_ledger RENAME TO platform_ledger_legacy")
-        conn.execute("""CREATE TABLE platform_ledger(id INTEGER PRIMARY KEY AUTOINCREMENT,source_type TEXT NOT NULL DEFAULT 'beat',source_id INTEGER NOT NULL,gross_amount INTEGER NOT NULL,platform_fee INTEGER NOT NULL,producer_credit INTEGER NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,UNIQUE(source_type,source_id))""")
-        conn.execute("""INSERT OR IGNORE INTO platform_ledger(source_type,source_id,gross_amount,platform_fee,producer_credit,created_at) SELECT 'beat',order_id,gross_amount,platform_fee,producer_credit,created_at FROM platform_ledger_legacy""")
-        conn.execute("DROP TABLE platform_ledger_legacy")
-    conn.commit()
-    conn.close()
+import os
+from datetime import datetime
+from decimal import Decimal
 
-def slugify(v):
- v=re.sub(r'[^a-z0-9]+','-',(v or '').lower()).strip('-');return v or 'producer'
-def unique_slug(c,name):
- base=slugify(name); s=base;n=2
- while c.execute('SELECT 1 FROM producers WHERE slug=?',(s,)).fetchone():s=f'{base}-{n}';n+=1
- return s
+from sqlalchemy import (
+    create_engine,
+    Column,
+    Integer,
+    String,
+    Text,
+    Float,
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Numeric,
+    UniqueConstraint,
+)
+from sqlalchemy.orm import declarative_base, sessionmaker, relationship
+from sqlalchemy.exc import IntegrityError
+
+
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./beat_hub.db")
+
+# Render/Railway/Postgres compatibility
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
+connect_args = {}
+if DATABASE_URL.startswith("sqlite"):
+    connect_args = {"check_same_thread": False}
+
+engine = create_engine(
+    DATABASE_URL,
+    connect_args=connect_args,
+    pool_pre_ping=True,
+)
+
+SessionLocal = sessionmaker(
+    autocommit=False,
+    autoflush=False,
+    bind=engine,
+)
+
+Base = declarative_base()
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String(100), unique=True, nullable=False, index=True)
+    email = Column(String(255), unique=True, nullable=True, index=True)
+    password_hash = Column(String(255), nullable=False)
+    full_name = Column(String(255), nullable=True)
+    phone = Column(String(30), nullable=True)
+    role = Column(String(50), default="producer", nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    beats = relationship(
+        "Beat",
+        back_populates="producer",
+        cascade="all, delete-orphan",
+    )
+
+    services = relationship(
+        "Service",
+        back_populates="producer",
+        cascade="all, delete-orphan",
+    )
+
+    bookings = relationship(
+        "Booking",
+        foreign_keys="Booking.producer_id",
+        back_populates="producer",
+    )
+
+    wallet = relationship(
+        "Wallet",
+        back_populates="user",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
+
+
+class Beat(Base):
+    __tablename__ = "beats"
+
+    id = Column(Integer, primary_key=True, index=True)
+    producer_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    title = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    genre = Column(String(100), nullable=True)
+    bpm = Column(Integer, nullable=True)
+    price = Column(Numeric(12, 2), default=0, nullable=False)
+    audio_url = Column(String(500), nullable=True)
+    cover_url = Column(String(500), nullable=True)
+    is_active = Column(Boolean, default=True, nullable=False)
+    is_featured = Column(Boolean, default=False, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    producer = relationship("User", back_populates="beats")
+
+
+class Service(Base):
+    __tablename__ = "services"
+
+    id = Column(Integer, primary_key=True, index=True)
+    producer_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    title = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    category = Column(String(100), nullable=True)
+    price = Column(Numeric(12, 2), default=0, nullable=False)
+    duration_minutes = Column(Integer, default=60, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    producer = relationship("User", back_populates="services")
+    bookings = relationship("Booking", back_populates="service")
+
+
+class Availability(Base):
+    __tablename__ = "availability"
+
+    id = Column(Integer, primary_key=True, index=True)
+    producer_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    day_of_week = Column(Integer, nullable=False)
+    start_time = Column(String(10), nullable=False)
+    end_time = Column(String(10), nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
+
+
+class Booking(Base):
+    __tablename__ = "bookings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    customer_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    producer_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    service_id = Column(Integer, ForeignKey("services.id"), nullable=False)
+
+    booking_date = Column(DateTime, nullable=False)
+    notes = Column(Text, nullable=True)
+
+    amount = Column(Numeric(12, 2), default=0, nullable=False)
+
+    status = Column(
+        String(50),
+        default="pending",
+        nullable=False,
+    )
+
+    payment_status = Column(
+        String(50),
+        default="pending",
+        nullable=False,
+    )
+
+    proposed_time = Column(DateTime, nullable=True)
+
+    created_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+        nullable=False,
+    )
+
+    producer = relationship(
+        "User",
+        foreign_keys=[producer_id],
+        back_populates="bookings",
+    )
+
+    customer = relationship(
+        "User",
+        foreign_keys=[customer_id],
+    )
+
+    service = relationship(
+        "Service",
+        back_populates="bookings",
+    )
+
+
+class Message(Base):
+    __tablename__ = "messages"
+
+    id = Column(Integer, primary_key=True, index=True)
+    sender_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    receiver_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    booking_id = Column(Integer, ForeignKey("bookings.id"), nullable=True)
+    content = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class Wallet(Base):
+    __tablename__ = "wallets"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(
+        Integer,
+        ForeignKey("users.id"),
+        unique=True,
+        nullable=False,
+    )
+
+    balance = Column(
+        Numeric(14, 2),
+        default=Decimal("0.00"),
+        nullable=False,
+    )
+
+    pending_balance = Column(
+        Numeric(14, 2),
+        default=Decimal("0.00"),
+        nullable=False,
+    )
+
+    total_earned = Column(
+        Numeric(14, 2),
+        default=Decimal("0.00"),
+        nullable=False,
+    )
+
+    total_withdrawn = Column(
+        Numeric(14, 2),
+        default=Decimal("0.00"),
+        nullable=False,
+    )
+
+    created_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+        nullable=False,
+    )
+
+    updated_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
+
+    user = relationship(
+        "User",
+        back_populates="wallet",
+    )
+
+
+class Transaction(Base):
+    __tablename__ = "transactions"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+
+    reference = Column(
+        String(150),
+        unique=True,
+        nullable=False,
+        index=True,
+    )
+
+    transaction_type = Column(
+        String(100),
+        nullable=False,
+    )
+
+    amount = Column(
+        Numeric(14, 2),
+        nullable=False,
+    )
+
+    status = Column(
+        String(50),
+        default="pending",
+        nullable=False,
+    )
+
+    description = Column(Text, nullable=True)
+
+    created_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+        nullable=False,
+    )
+
+
+class PlatformWallet(Base):
+    __tablename__ = "platform_wallet"
+
+    id = Column(Integer, primary_key=True)
+
+    balance = Column(
+        Numeric(14, 2),
+        default=Decimal("0.00"),
+        nullable=False,
+    )
+
+    pending_balance = Column(
+        Numeric(14, 2),
+        default=Decimal("0.00"),
+        nullable=False,
+    )
+
+    total_earned = Column(
+        Numeric(14, 2),
+        default=Decimal("0.00"),
+        nullable=False,
+    )
+
+    total_withdrawn = Column(
+        Numeric(14, 2),
+        default=Decimal("0.00"),
+        nullable=False,
+    )
+
+    updated_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
+
+
+class LedgerEntry(Base):
+    __tablename__ = "ledger_entries"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    reference = Column(
+        String(150),
+        unique=True,
+        nullable=False,
+        index=True,
+    )
+
+    entry_type = Column(
+        String(100),
+        nullable=False,
+    )
+
+    source_type = Column(
+        String(100),
+        nullable=True,
+    )
+
+    source_id = Column(
+        Integer,
+        nullable=True,
+    )
+
+    producer_id = Column(
+        Integer,
+        ForeignKey("users.id"),
+        nullable=True,
+    )
+
+    gross_amount = Column(
+        Numeric(14, 2),
+        default=Decimal("0.00"),
+        nullable=False,
+    )
+
+    producer_amount = Column(
+        Numeric(14, 2),
+        default=Decimal("0.00"),
+        nullable=False,
+    )
+
+    platform_amount = Column(
+        Numeric(14, 2),
+        default=Decimal("0.00"),
+        nullable=False,
+    )
+
+    status = Column(
+        String(50),
+        default="completed",
+        nullable=False,
+    )
+
+    description = Column(Text, nullable=True)
+
+    created_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+        nullable=False,
+    )
+
+
+class Withdrawal(Base):
+    __tablename__ = "withdrawals"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    user_id = Column(
+        Integer,
+        ForeignKey("users.id"),
+        nullable=True,
+    )
+
+    amount = Column(
+        Numeric(14, 2),
+        nullable=False,
+    )
+
+    phone = Column(
+        String(30),
+        nullable=False,
+    )
+
+    withdrawal_type = Column(
+        String(50),
+        default="producer",
+        nullable=False,
+    )
+
+    reference = Column(
+        String(150),
+        unique=True,
+        nullable=False,
+        index=True,
+    )
+
+    status = Column(
+        String(50),
+        default="pending",
+        nullable=False,
+    )
+
+    mpesa_reference = Column(
+        String(150),
+        nullable=True,
+    )
+
+    failure_reason = Column(
+        Text,
+        nullable=True,
+    )
+
+    created_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+        nullable=False,
+    )
+
+    completed_at = Column(
+        DateTime,
+        nullable=True,
+    )
+
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+def create_tables():
+    Base.metadata.create_all(bind=engine)
+
+
+def get_or_create_wallet(db, user_id):
+    wallet = (
+        db.query(Wallet)
+        .filter(Wallet.user_id == user_id)
+        .first()
+    )
+
+    if wallet:
+        return wallet
+
+    wallet = Wallet(
+        user_id=user_id,
+        balance=Decimal("0.00"),
+        pending_balance=Decimal("0.00"),
+        total_earned=Decimal("0.00"),
+        total_withdrawn=Decimal("0.00"),
+    )
+
+    db.add(wallet)
+
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        wallet = (
+            db.query(Wallet)
+            .filter(Wallet.user_id == user_id)
+            .first()
+        )
+
+    return wallet
+
+
+def get_platform_wallet(db):
+    wallet = db.query(PlatformWallet).first()
+
+    if wallet:
+        return wallet
+
+    wallet = PlatformWallet(
+        balance=Decimal("0.00"),
+        pending_balance=Decimal("0.00"),
+        total_earned=Decimal("0.00"),
+        total_withdrawn=Decimal("0.00"),
+    )
+
+    db.add(wallet)
+    db.commit()
+    db.refresh(wallet)
+
+    return wallet
