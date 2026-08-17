@@ -2,122 +2,72 @@ import hashlib
 import hmac
 import os
 import secrets
-
 from fastapi import HTTPException, Request
 from database import get_db
 
-
-ITERATIONS = int(
-    os.getenv(
-        "PASSWORD_HASH_ITERATIONS",
-        "300000"
-    )
-)
+ITERATIONS = 300_000
 
 
-def hash_password(password: str) -> str:
-    if not isinstance(password, str) or len(password) < 8:
-        raise ValueError(
-            "Password must be at least 8 characters."
-        )
-
+def hash_password(password):
     salt = os.urandom(16)
-
-    digest = hashlib.pbkdf2_hmac(
-        "sha256",
-        password.encode("utf-8"),
-        salt,
-        ITERATIONS
-    )
-
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, ITERATIONS)
     return f"{salt.hex()}${digest.hex()}"
 
 
-def verify_password(
-    password: str,
-    stored: str
-) -> bool:
+def verify_password(password, stored):
     try:
-        salt, digest = stored.split("$", 1)
-
-        calculated = hashlib.pbkdf2_hmac(
-            "sha256",
-            password.encode("utf-8"),
-            bytes.fromhex(salt),
-            ITERATIONS
+        salt_hex, digest_hex = (stored or "").split("$", 1)
+        got = hashlib.pbkdf2_hmac(
+            "sha256", password.encode(), bytes.fromhex(salt_hex), ITERATIONS
         ).hex()
-
-        return hmac.compare_digest(
-            calculated,
-            digest
-        )
-
+        return hmac.compare_digest(got, digest_hex)
     except Exception:
         return False
 
 
 def current_producer(request: Request):
-    # A Super Admin session must never accidentally
-    # become a producer session.
-    if request.session.get("super_admin"):
-        return None
-
-    producer_id = request.session.get(
-        "producer_id"
-    )
-
-    if not producer_id:
-        return None
-
-    connection = get_db()
-
+    raw_id = request.session.get("producer_id")
     try:
-        return connection.execute(
-            """
-            SELECT *
-            FROM producers
-            WHERE id=?
-            """,
-            (producer_id,)
-        ).fetchone()
+        pid = int(raw_id)
+    except (TypeError, ValueError):
+        return None
+    if pid <= 0:
+        return None
 
+    conn = get_db()
+    try:
+        return conn.execute(
+            "SELECT * FROM producers WHERE id=? LIMIT 1", (pid,)
+        ).fetchone()
     finally:
-        connection.close()
+        conn.close()
 
 
 def require_producer(request: Request):
     producer = current_producer(request)
-
     if not producer:
-        raise HTTPException(
-            status_code=401,
-            detail="Login required"
-        )
-
+        request.session.pop("producer_id", None)
+        request.session.pop("remember_me", None)
+        raise HTTPException(401, "Login required")
     return producer
 
 
-def is_super_admin(request: Request) -> bool:
-    return bool(
-        request.session.get("super_admin")
+def is_super_admin(request: Request):
+    return (
+        request.session.get("super_admin") is True
+        and request.session.get("role") == "super_admin"
     )
 
 
 def require_super_admin(request: Request):
     if not is_super_admin(request):
-        raise HTTPException(
-            status_code=401,
-            detail="Super Admin login required"
-        )
-
+        raise HTTPException(401, "Super admin login required")
     return True
 
 
-def new_token() -> str:
+def token_hash(token):
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def new_token():
     return secrets.token_urlsafe(32)
-
-
-def token_hash(token: str) -> str:
-    return hashlib.sha256(
-        token.encode("utf-8")
-    ).hexdigest()
