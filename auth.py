@@ -15,12 +15,36 @@ def hash_password(password):
 
 
 def verify_password(password, stored):
+    """Verify current BeatHub hashes and compatible legacy hashes."""
+    if password is None or stored is None:
+        return False
     try:
-        salt_hex, digest_hex = (stored or "").split("$", 1)
-        got = hashlib.pbkdf2_hmac(
-            "sha256", password.encode(), bytes.fromhex(salt_hex), ITERATIONS
-        ).hex()
-        return hmac.compare_digest(got, digest_hex)
+        stored = str(stored).strip()
+        if not stored:
+            return False
+        if stored.count('$') == 1:
+            salt_hex, digest_hex = stored.split('$', 1)
+            salt = bytes.fromhex(salt_hex)
+            if len(salt) != 16 or len(digest_hex) != 64:
+                return False
+            got = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, ITERATIONS).hex()
+            return hmac.compare_digest(got, digest_hex)
+        parts = stored.split('$')
+        if len(parts) == 4 and parts[0].lower() == 'pbkdf2_sha256':
+            rounds = int(parts[1])
+            salt = parts[2]
+            expected = parts[3]
+            got = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt.encode('utf-8'), rounds)
+            import base64
+            encoded = base64.b64encode(got).decode('ascii').rstrip('=')
+            return hmac.compare_digest(encoded, expected)
+        if stored.startswith(('$2a$', '$2b$', '$2y$')):
+            try:
+                import bcrypt
+                return bool(bcrypt.checkpw(password.encode('utf-8'), stored.encode('utf-8')))
+            except Exception:
+                return False
+        return False
     except Exception:
         return False
 
