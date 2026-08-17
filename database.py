@@ -1,4 +1,3 @@
-```python
 import sqlite3
 import re
 from pathlib import Path
@@ -666,4 +665,3 @@ def init_db():
 
     finally:
         conn.close()
-```
