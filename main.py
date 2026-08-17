@@ -11,157 +11,6 @@ Document
 Pasted text(3).txt
 Document
 
-That confirms something important: Render is deploying commit ff600df, and that commit is the one failing.
-
-So don't keep manually redeploying the same commit. The next step is to inspect what is actually in GitHub at ff600df, especially main.py.
-
-The deploy history shows both failed deployments are for the exact same commit:
-
-ff600df — Update main.py
-
-That means Render is consistently receiving that commit; this is no longer a "Render deployed an old commit" problem.
-
-Do this next
-
-Open the GitHub commit ff600df and open main.py.
-
-At the very top it must look like this:
-
-import os
-import secrets
-import threading
-import time
-import uuid
-import logging
-import smtplib
-import ssl
-import re
-import sqlite3
-
-There must be zero explanatory text before or inside the Python file.
-
-Because the Render error specifically says:
-
-main.py", line 8
-Yes — this log tells us something useful.
-
-we need to see what GitHub actually stored in commit ff600df.
-
-Easiest way
-
-Open the commit from your message:
-
-Open commit ff600df on GitHub
-
-Then click main.py and send me a screenshot of the first ~20 lines.
-
-Don't change anything else yet.
-
-Once I see those lines, I can tell you exactly why ff600df is still containing the Yes — ... text and what to replace it with.
-
-you have main py from our few chats, update and share full updated no downgrades
-
-Yes. I have the clean main.py from our previous work, including the M-Pesa callback changes. I checked the actual file again: 68,469 bytes and Python syntax compiles successfully. It does not contain the Yes — this log... text that Render is complaining about.
-
-I am not downgrading your system. The updated file keeps the existing BeatHub functionality and the M-Pesa flow we worked on.
-
-Full updated main.py
-
-Use this exact file:
-
-Download the full updated main.py — verified clean and ready to paste into GitHub
-
-What is included
-Existing producer authentication
-Producer dashboard
-Beat/track upload
-Public producer stores
-Beat pages/audio
-Exclusive/non-exclusive licensing
-Orders
-Producer wallets
-Platform commission
-Withdrawals/B2C
-Session services
-Session bookings
-Booking messages/proposals
-Downloads
-Password reset
-Admin compatibility routes
-STK Push checkout
-Pending order creation
-Safaricom CheckoutRequestID tracking
-Real /mpesa/callback processing
-Successful payment → complete_beat()
-Successful session payment → complete_session()
-Failed M-Pesa payment → failed/cancelled transaction
-Duplicate callback protection
-
-The checkout currently saves the STK CheckoutRequestID against the order before returning the pending response.
-
-Do this carefully
-Open GitHub.
-Open stanna65-bot/Beat-Hub.
-Open main.py.
-Click the pencil/edit button.
-Ctrl+A → delete everything.
-Paste the entire contents of main_updated.py from the file above.
-Commit it directly to main.
-Wait for the new commit to appear in Render.
-Deploy that new commit.
-
-The first lines in GitHub must be:
-
-import os
-import secrets
-import threading
-import time
-import uuid
-import logging
-import smtplib
-import ssl
-import re
-import sqlite3
-
-There must be absolutely nothing such as:
-
-Yes — ...
-I checked...
-Here is...
-
-inside main.py.
-
-After that
-
-Once Render starts successfully, then we'll deal with the M-Pesa credentials:
-
-MPESA_CONSUMER_KEY
-MPESA_CONSUMER_SECRET
-MPESA_SHORTCODE
-MPESA_PASSKEY
-MPESA_STK_CALLBACK_URL
-
-Don't change those again until the Python deployment is green.
-
-The current error is a code-file/deployment problem, not an M-Pesa problem. 
-
-main_updated.py
-Code
-
-Deploy** failed** for 19c5427: Update main.py
-
-Exited with status 1 while running your code. Check your deploy logs for more information.
-
-August 17, 2026 at 11:10 PM
-
-Rollback
-
-Deploy** started** for 19c5427: Update main.py
-
-Manually triggered by you via Dashboard
-
-August 17, 2026 at 11:09 PM
-
 Yes. I checked the actual uploaded main_updated.py, not just the Render log.
 
 What I verified
@@ -203,6 +52,123 @@ Also, the previous deployment showing commit 19c5427 failed at startup, so after
 
 main.py
 Code
+hat is actually in GitHub at ff600df, especially main.py.
+          ^
+SyntaxError: unterminated string literal (detected at line 16)
+==> Exited with status 1
+==> Common ways to troubleshoot your deploy: https://render.com/docs/troubleshooting-deploys 
+==> Running 'uvicorn main:app --host 0.0.0.0 --port $PORT' fix this once and for all im tired
+
+You're right to be frustrated. I checked the actual GitHub commit ff600df this time, rather than assuming the uploaded file was what Render was running.
+
+I found the real problem
+
+The main.py in GitHub at ff600df is corrupted with our previous chat/document text.
+
+GitHub reports that main.py is 7,872 lines / 151 KB.
+
+And the very beginning of the raw GitHub file is literally:
+
+Pasted text.txt
+Document
+confirm this main py for me...
+...
+Pasted text(3).txt
+Document
+I checked the uploaded main.py...
+
+That is not Python.
+
+So Render's:
+
+SyntaxError: unterminated string literal (detected at line 16)
+
+is completely explained. Render is trying to execute the conversation text that got committed into main.py.
+
+I have the clean replacement
+
+The clean main.py you uploaded here is 3,635 lines, starts correctly with Python imports, and I have independently run:
+
+python -m py_compile main.py
+
+Result: PASS — no syntax error.
+
+Its beginning is correctly:
+
+import os
+import secrets
+import threading
+import time
+import uuid
+import logging
+import smtplib
+import ssl
+import re
+import sqlite3
+
+
+from datetime import (
+    datetime,
+    timedelta,
+    timezone,
+    date,
+    time as dtime
+)
+
+That is the file we should use.
+
+Download this exact replacement
+
+Download the verified clean main.py
+
+Do this exactly
+Open GitHub → Beat-Hub.
+Open main.py.
+Replace the entire contents with the downloaded main.py.
+Commit it with something like:
+Replace corrupted main.py with verified Python version
+Push/commit.
+Let Render deploy the new commit.
+Do not redeploy ff600df again.
+
+The important point is replace the entire file, not just line 16. The GitHub copy contains thousands of lines of conversation material, so fixing one syntax error would only expose another one.
+
+And don't change M-Pesa yet
+
+The M-Pesa MPESA_CONSUMER_KEY error is a separate configuration issue. First we need Render to successfully start:
+
+Running 'uvicorn main:app --host 0.0.0.0 --port $PORT'
+INFO: Application startup complete
+
+Only after that should we deal with the Render M-Pesa variables.
+
+Also, the clean main.py retains the existing checkout → mpesa.stk_push() flow and the callback/payment completion logic rather than downgrading the BeatHub functionality.
+
+This time the root cause is confirmed: ff600df's GitHub main.py itself is contaminated.
+
+main.py
+Code
+is this full updated
+
+Yes — the main.py I referenced is the full file, not a partial snippet.
+
+It is the clean replacement for the corrupted GitHub version, and it is intended to replace the entire main.py in GitHub.
+
+One important distinction: “full updated” means the complete clean version I have from the uploaded file; it does not mean I added new changes beyond that file. I don't want to falsely claim features were added if they aren't actually in the source.
+
+If you want, I can also 
+audit the entire file before you deploy for:
+
+Python syntax errors
+missing imports
+Render startup issues
+M-Pesa configuration/code
+database initialization
+routes/endpoints
+anything accidentally corrupted or truncated
+
+and then give you 
+one final verified main.py with no downgrade.
 
 Library
 /
