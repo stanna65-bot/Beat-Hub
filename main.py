@@ -22,164 +22,6 @@ you disappointed me again, you see the colours and how this was presented, now i
 Pasted text(6).txt
 Document
 
-You're right — I have the main.py you shared. I checked it.
-
-The important point is: the existing password hashing flow itself is consistent. Signup stores:
-
-auth.hash_password(password)
-
-and login checks:
-
-auth.verify_password(password, p['password_hash'])
-
-The mistake was my previous update around the login persistence. Do not use that previous replacement. It added unnecessary cookie/session changes.
-
-Replace your entire /login section with this
-
-This keeps your proven authentication logic intact and only adds remember_me safely:
-
-@app.get('/login')
-def login_page(r: Request):
-    if auth.current_producer(r):
-        return RedirectResponse('/admin', 303)
-
-
-    return render_no_store(
-        'login.html',
-        r,
-        error=None,
-        saved_email=r.cookies.get('beathub_last_email', '')
-    )
-
-
-
-
-@app.post('/login')
-def login(
-    r: Request,
-    email: str = Form(...),
-    password: str = Form(...),
-    remember_me: str | None = Form(None)
-):
-    email = email.strip().lower()
-
-
-    c = get_db()
-
-
-    try:
-        p = c.execute(
-            '''
-            SELECT *
-            FROM producers
-            WHERE email=?
-            ''',
-            (email,)
-        ).fetchone()
-    finally:
-        c.close()
-
-
-    if not p or not auth.verify_password(
-        password,
-        p['password_hash']
-    ):
-        return render_no_store(
-            'login.html',
-            r,
-            error='Incorrect email or password.',
-            saved_email=email
-        )
-
-
-    r.session.clear()
-    r.session['producer_id'] = p['id']
-
-
-    response = RedirectResponse('/admin', 303)
-
-
-    # Remember only the email, never the password.
-    response.set_cookie(
-        key='beathub_last_email',
-        value=email,
-        max_age=60 * 60 * 24 * 365,
-        httponly=False,
-        samesite='lax',
-        secure=(
-            os.getenv(
-                'SESSION_HTTPS_ONLY',
-                'false'
-            ).lower() == 'true'
-        ),
-        path='/'
-    )
-
-
-    return response
-
-Your current signup route automatically logs the newly created producer into /admin, and your existing logout clears the session.
-
-Important: if the account you're testing was created during one of the earlier broken versions, create one fresh test account after replacing the code. The new account should then log out and log back in with the exact email/password used during signup.
-
-app.add_middleware(
-    SessionMiddleware,
-    secret_key=(
-        os.getenv('SESSION_SECRET')
-        or secrets.token_urlsafe(48)
-    ),
-    same_site='lax',
-    https_only=(
-        os.getenv(
-            'SESSION_HTTPS_ONLY',
-            'false'
-        ).lower() == 'true'
-    ),
-    max_age=(
-        int(
-            os.getenv(
-                'SESSION_MAX_AGE',
-                str(60 * 60 * 24 * 30)
-            )
-        )
-    )
-) update
-
-Yes. Update it so normal sessions stay browser-session based, while Remember me can later be handled separately. Most importantly, use a stable SESSION_SECRET from .env—not a newly generated secret after every restart, which can invalidate existing sessions.
-
-Replace your current block with:
-
-app.add_middleware(
-    SessionMiddleware,
-    secret_key=os.getenv(
-        'SESSION_SECRET',
-        'change-this-in-production'
-    ),
-    same_site='lax',
-    https_only=(
-        os.getenv(
-            'SESSION_HTTPS_ONLY',
-            'false'
-        ).lower() == 'true'
-    ),
-    max_age=int(
-        os.getenv(
-            'SESSION_MAX_AGE',
-            str(60 * 60 * 24)
-        )
-    )
-)
-
-Then ensure your .env contains a permanent random secret:
-
-SESSION_SECRET=PASTE_YOUR_LONG_RANDOM_SECRET_HERE
-SESSION_HTTPS_ONLY=false
-SESSION_MAX_AGE=86400
-
-For your live Render deployment, set the same SESSION_SECRET in Render Environment Variables. Keep that secret unchanged after deployment; changing it logs out existing users.
-
-no prduce full updated main
-
 Done. I used the latest main.py you shared and produced the full updated replacement without removing your BeatHub features.
 
 Key fixes included:
@@ -212,10 +54,281 @@ For Render production, SESSION_HTTPS_ONLY=true is preferable once you're only us
 
 main.py
 Code
+{% extends 'base.html' %}
+
+{% block body %}
+<div style="max-width:460px;margin:80px auto" class="card">
+
+    <a class="brand" href="/">BEAT <span>HUB</span></a>
+
+    <h1>Welcome back</h1>
+
+    {% if error %}
+    <p style="color:var(--pink)">{{ error }}</p>
+    {% endif %}
+
+    <form method="post" autocomplete="on" id="loginForm">
+
+        <label>Email</label>
+        <input
+            type="email"
+            id="email"
+            name="email"
+            autocomplete="username"
+            autocapitalize="none"
+            spellcheck="false"
+            required
+        >
+
+        <label>Password</label>
+        <input
+            type="password"
+            id="password"
+            name="password"
+            autocomplete="current-password"
+            required
+        >
+
+        <label style="display:flex;align-items:center;gap:8px;margin:16px 0;cursor:pointer">
+            <input
+                type="checkbox"
+                id="remember_me"
+                name="remember_me"
+                value="true"
+                style="width:auto"
+            >
+            <span>Remember me</span>
+        </label>
+
+        <button class="btn" type="submit">
+            Login
+        </button>
+
+    </form>
+
+    <p>
+        <a href="/forgot-password">
+            Forgot password?
+        </a>
+    </p>
+
+    <p class="muted">
+        New producer?
+        <a href="/signup" style="color:var(--teal)">
+            Create an account
+        </a>
+    </p>
+
+</div>
+
+<script>
+(function () {
+    const email = document.getElementById("email");
+    const password = document.getElementById("password");
+    const remember = document.getElementById("remember_me");
+    const form = document.getElementById("loginForm");
+
+    const savedEmail = localStorage.getItem("beathub_login_email");
+    const rememberChoice = localStorage.getItem("beathub_remember_me");
+
+    /*
+     * Email is remembered for convenience.
+     * BeatHub never stores the user's password here.
+     */
+    if (savedEmail) {
+        email.value = savedEmail;
+    }
+
+    if (rememberChoice === "true") {
+        remember.checked = true;
+    }
+
+    form.addEventListener("submit", function () {
+        if (email.value.trim()) {
+            localStorage.setItem(
+                "beathub_login_email",
+                email.value.trim()
+            );
+        }
+
+        localStorage.setItem(
+            "beathub_remember_me",
+            remember.checked ? "true" : "false"
+        );
+
+        /*
+         * Never save the password in localStorage.
+         * Browser password managers handle password saving securely.
+         */
+        if (!remember.checked) {
+            password.value = password.value;
+        }
+    });
+})();
+</script>
+
+{% endblock %}
+ update and share full
+
+Replace your entire templates/login.html with this updated version. It works with the updated main.py by using saved_email, remembers only the email, and leaves the password blank unless the browser's own password manager autofills it.
+
+{% extends 'base.html' %}
+
+
+{% block body %}
+<div style="max-width:460px;margin:80px auto" class="card">
+
+
+    <a class="brand" href="/">BEAT <span>HUB</span></a>
+
+
+    <h1>Welcome back</h1>
+
+
+    {% if error %}
+        <p style="color:var(--pink)">{{ error }}</p>
+    {% endif %}
+
+
+    <form method="post" autocomplete="on" id="loginForm">
+
+
+        <label>Email</label>
+        <input
+            type="email"
+            id="email"
+            name="email"
+            value="{{ saved_email or '' }}"
+            autocomplete="username"
+            autocapitalize="none"
+            spellcheck="false"
+            required
+        >
+
+
+        <label>Password</label>
+        <input
+            type="password"
+            id="password"
+            name="password"
+            autocomplete="current-password"
+            required
+        >
+
+
+        <label style="display:flex;align-items:center;gap:8px;margin:16px 0;cursor:pointer">
+            <input
+                type="checkbox"
+                id="remember_me"
+                name="remember_me"
+                value="true"
+                style="width:auto"
+            >
+            <span>Remember me</span>
+        </label>
+
+
+        <button class="btn" type="submit">
+            Login
+        </button>
+
+
+    </form>
+
+
+    <p>
+        <a href="/forgot-password">
+            Forgot password?
+        </a>
+    </p>
+
+
+    <p class="muted">
+        New producer?
+        <a href="/signup" style="color:var(--teal)">
+            Create an account
+        </a>
+    </p>
+
+
+</div>
+
+
+<script>
+(function () {
+    const email = document.getElementById("email");
+    const remember = document.getElementById("remember_me");
+    const form = document.getElementById("loginForm");
+
+
+    /*
+     * The backend remembers the last successfully used email
+     * in a BeatHub cookie. This local setting only remembers
+     * the user's checkbox preference.
+     *
+     * Passwords are NEVER stored by this JavaScript.
+     */
+
+
+    const rememberChoice = localStorage.getItem(
+        "beathub_remember_me"
+    );
+
+
+    if (rememberChoice === "true") {
+        remember.checked = true;
+    }
+
+
+    form.addEventListener("submit", function () {
+
+
+        localStorage.setItem(
+            "beathub_remember_me",
+            remember.checked ? "true" : "false"
+        );
+
+
+    });
+})();
+</script>
+
+
+{% endblock %}
+This fixes the behavior you requested
+After creating an account and later logging out, the email remains visible.
+The password does not remain visible or get stored by BeatHub.
+If the user ticks Remember me, the checkbox preference remains selected.
+The browser can still offer to save/autofill the password using its own secure password manager.
+No JavaScript password storage.
+value="{{ saved_email or '' }}" matches the updated main.py login route.
+no theres an issue i want you to fix, i cant login and the email exists, produce full updated py on the matter
+
+I fixed the signup → logout → login authentication flow in your latest main.py and kept the rest of your system intact.
+
+The update:
+
+normalizes email consistently during signup and login
+uses case-insensitive email lookup
+does not alter the password before verification
+verifies against the stored password hash correctly
+validates password confirmation when supplied
+preserves email remembering
+keeps passwords out of cookies/local storage
+preserves your existing BeatHub routes and features
+
+Replace your current main.py with:
+
+Download the updated main.py
+
+After replacing it, restart locally and push/deploy to Render. Then create one fresh test account, log out, and log back in with exactly the same password.
+
+main_updated.py
+Code
 
 Library
 /
-main.py
+main_updated.py
 import os,secrets,threading,time,uuid,smtplib,ssl,re,sqlite3
 from datetime import datetime,timedelta,timezone,date,time as dtime
 from email.message import EmailMessage
@@ -547,192 +660,45 @@ def terms(r:Request):
 
 @app.get('/signup')
 def signup_page(r:Request):
-    if auth.current_producer(r):
-        return RedirectResponse(
-            '/admin',
-            303
-        )
-
-    return render(
-        'signup.html',
-        r,
-        error=None
-    )
-
+    if auth.current_producer(r): return RedirectResponse('/admin',303)
+    return render_no_store('signup.html',r,error=None)
 
 @app.post('/signup')
-def signup(
-    r:Request,
-    name:str=Form(...),
-    email:str=Form(...),
-    password:str=Form(...)
-):
-    name=name.strip()
-    email=email.strip().lower()
-
-    if (
-        not name
-        or len(password)<8
-        or '@' not in email
-    ):
-        return render(
-            'signup.html',
-            r,
-            error=(
-                'Use a valid email and a password '
-                'of at least 8 characters.'
-            )
-        )
-
+def signup(r:Request,name:str=Form(...),email:str=Form(...),password:str=Form(...),confirm_password:str|None=Form(None),accept_terms:str|None=Form(None)):
+    name=name.strip(); email=email.strip().lower()
+    if not name: return render_no_store('signup.html',r,error='Your producer or stage name is required.')
+    if '@' not in email or len(email)>254: return render_no_store('signup.html',r,error='Enter a valid email address.')
+    if len(password)<8: return render_no_store('signup.html',r,error='Password must be at least 8 characters.')
+    if confirm_password is not None and password!=confirm_password: return render_no_store('signup.html',r,error='Passwords do not match.')
     c=get_db()
-
     try:
-        if c.execute(
-            'SELECT 1 FROM producers WHERE email=?',
-            (email,)
-        ).fetchone():
-            return render(
-                'signup.html',
-                r,
-                error='Email already exists.'
-            )
-
-        pid=c.execute(
-            '''
-            INSERT INTO producers(
-                slug,
-                email,
-                password_hash,
-                name
-            )
-            VALUES(?,?,?,?)
-            ''',
-            (
-                unique_slug(c,name),
-                email,
-                auth.hash_password(password),
-                name
-            )
-        ).lastrowid
-
-        ensure_wallet(
-            c,
-            pid
-        )
-
-        c.commit()
-
-    finally:
-        c.close()
-
-    r.session.clear()
-    r.session['producer_id']=pid
-
-    response=RedirectResponse(
-        '/admin',
-        303
-    )
-
-    response.set_cookie(
-        key='beathub_last_email',
-        value=email,
-        max_age=60*60*24*365,
-        httponly=False,
-        samesite='lax',
-        secure=(
-            os.getenv(
-                'SESSION_HTTPS_ONLY',
-                'false'
-            ).lower()=='true'
-        ),
-        path='/'
-    )
-
+        if c.execute('SELECT 1 FROM producers WHERE lower(trim(email))=?',(email,)).fetchone(): return render_no_store('signup.html',r,error='Email already exists. Please login or reset your password.')
+        pid=c.execute('INSERT INTO producers(slug,email,password_hash,name) VALUES(?,?,?,?)',(unique_slug(c,name),email,auth.hash_password(password),name)).lastrowid
+        ensure_wallet(c,pid); c.commit()
+    except Exception:
+        c.rollback(); raise
+    finally: c.close()
+    r.session.clear(); r.session['producer_id']=pid
+    response=RedirectResponse('/admin',303)
+    response.set_cookie(key='beathub_last_email',value=email,max_age=60*60*24*365,httponly=False,samesite='lax',secure=os.getenv('SESSION_HTTPS_ONLY','false').lower()=='true',path='/')
     return response
-
 
 @app.get('/login')
 def login_page(r:Request):
-    if auth.current_producer(r):
-        return RedirectResponse(
-            '/admin',
-            303
-        )
-
-    return render_no_store(
-        'login.html',
-        r,
-        error=None,
-        saved_email=r.cookies.get(
-            'beathub_last_email',
-            ''
-        )
-    )
-
+    if auth.current_producer(r): return RedirectResponse('/admin',303)
+    return render_no_store('login.html',r,error=None,saved_email=r.cookies.get('beathub_last_email',''))
 
 @app.post('/login')
-def login(
-    r:Request,
-    email:str=Form(...),
-    password:str=Form(...),
-    remember_me:str|None=Form(None)
-):
+def login(r:Request,email:str=Form(...),password:str=Form(...),remember_me:str|None=Form(None)):
     email=email.strip().lower()
-
+    if not email or not password: return render_no_store('login.html',r,error='Enter your email and password.',saved_email=email)
     c=get_db()
-
-    try:
-        p=c.execute(
-            '''
-            SELECT *
-            FROM producers
-            WHERE email=?
-            ''',
-            (email,)
-        ).fetchone()
-
-    finally:
-        c.close()
-
-    if (
-        not p
-        or not auth.verify_password(
-            password,
-            p['password_hash']
-        )
-    ):
-        return render_no_store(
-            'login.html',
-            r,
-            error='Incorrect email or password.',
-            saved_email=email
-        )
-
-    r.session.clear()
-    r.session['producer_id']=p['id']
-    r.session['remember_me']=(remember_me=='true')
-
-    response=RedirectResponse(
-        '/admin',
-        303
-    )
-
-    # Remember the email for convenience. Never store the password.
-    response.set_cookie(
-        key='beathub_last_email',
-        value=email,
-        max_age=60*60*24*365,
-        httponly=False,
-        samesite='lax',
-        secure=(
-            os.getenv(
-                'SESSION_HTTPS_ONLY',
-                'false'
-            ).lower()=='true'
-        ),
-        path='/'
-    )
-
+    try: p=c.execute('SELECT * FROM producers WHERE lower(trim(email))=? LIMIT 1',(email,)).fetchone()
+    finally: c.close()
+    if not p or not auth.verify_password(password,(p['password_hash'] or '').strip()): return render_no_store('login.html',r,error='Incorrect email or password.',saved_email=email)
+    r.session.clear(); r.session['producer_id']=int(p['id']); r.session['remember_me']=(remember_me=='true')
+    response=RedirectResponse('/admin',303)
+    response.set_cookie(key='beathub_last_email',value=email,max_age=60*60*24*365,httponly=False,samesite='lax',secure=os.getenv('SESSION_HTTPS_ONLY','false').lower()=='true',path='/')
     return response
 
 @app.post('/logout')
