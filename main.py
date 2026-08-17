@@ -11,89 +11,136 @@ Document
 Pasted text(3).txt
 Document
 
-Yes. I checked the actual uploaded main_updated.py, not just the Render log.
+Exactly. Those are the two STK Push endpoint URLs:
 
-What I verified
-The file is 3,635 lines.
-It contains no accidental explanatory text such as Yes — ....
-It contains no non-ASCII em-dash characters that caused the previous SyntaxError.
-I ran Python compilation against the complete file: py_compile passed successfully.
-The existing BeatHub functionality is preserved, including:
-authentication/session handling
-producer dashboard
-beat/track uploads
-public beat/audio pages
-licensing
-orders
-producer wallets and commission
-withdrawals
-sessions/bookings
-messages/proposals
-downloads
-Super Admin compatibility
-M-Pesa payment/callback handling
-the callback/database-lock fixes from the previous version.
+Sandbox: https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest
+Production: https://api.safaricom.co.ke/mpesa/stkpush/v1/processrequest
 
-The M-Pesa configuration error you showed earlier:
+For your current BeatHub setup, use Sandbox until the Daraja test payment works.
+
+One important point: you don't normally put either of those URLs into the Render environment-variable fields unless the code specifically has an MPESA_STK_URL variable. Your current code constructs the STK URL from MPESA_BASE_URL.
+
+So the configuration should effectively be:
+
+MPESA_BASE_URL=https://sandbox.safaricom.co.ke
+
+and the application builds:
+
+https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest
+
+Your production switch later becomes:
+
+MPESA_BASE_URL=https://api.safaricom.co.ke
+Your immediate Render setup
+
+Use:
+
+MPESA_CONSUMER_KEY=your_sandbox_consumer_key
+MPESA_CONSUMER_SECRET=your_sandbox_consumer_secret
+MPESA_SHORTCODE=your_sandbox_shortcode
+MPESA_PASSKEY=your_sandbox_passkey
+MPESA_BASE_URL=https://sandbox.safaricom.co.ke
+MPESA_STK_CALLBACK_URL=https://YOUR-APP.onrender.com/mpesa/callback
+
+Do not paste your Consumer Secret or Passkey here. Put them directly into Render's secret-value fields.
+
+And the error you originally showed:
 
 Missing required M-Pesa configuration: MPESA_CONSUMER_KEY
 
-is not a Python syntax problem. That is an environment-variable/configuration issue on Render and should be handled separately after the application successfully starts.
+means Render currently isn't supplying that variable to the running application. The code explicitly checks for it before obtaining the OAuth token.
 
-Full clean main.py
+If you give me your Render app URL, I can tell you the exact callback URL to enter, and we can then go through the Render variables one-by-one without changing or downgrading the existing code.
 
-I prepared the complete clean file here:
+no passkey and shortcode help
 
-Download the full updated main.py
+Yes — the shortcode and passkey are the confusing part. For Sandbox, you don't make up either one.
 
-Use this exact file for the GitHub main.py. Do not paste any explanation above or below the Python code into the file.
+Safaricom's Daraja portal provides a sandbox environment specifically for testing/simulation.
 
-Also, the previous deployment showing commit 19c5427 failed at startup, so after replacing main.py, make a new commit and deploy that new commit rather than manually redeploying the old failed commit.
+1. Sandbox shortcode
 
-main.py
-Code
-hat is actually in GitHub at ff600df, especially main.py.
-          ^
-SyntaxError: unterminated string literal (detected at line 16)
+Go into your Daraja account:
+
+Safaricom Daraja Developer Portal
+
+Then:
+
+Dashboard → My Apps → your Sandbox app → Test Credentials / Test Data / Simulator
+
+Look for the Lipa Na M-Pesa Online / STK Push test credentials.
+
+The Shortcode shown there is what goes into:
+
+MPESA_SHORTCODE
+
+Do not use your personal M-Pesa number.
+Do not use your eventual live PayBill/Till number.
+
+2. Sandbox passkey
+
+In the same Test Data / Simulator area, look for:
+
+Lipa Na M-Pesa Online Passkey
+
+Copy that exact value into:
+
+MPESA_PASSKEY
+
+The passkey is long and looks like a random credential. Don't send it to me or put it in GitHub. Put it directly into Render.
+
+3. Your Render variables should therefore look like this
+MPESA_CONSUMER_KEY          = [from your Daraja app]
+MPESA_CONSUMER_SECRET       = [from your Daraja app]
+MPESA_SHORTCODE             = [sandbox shortcode from Test Data]
+MPESA_PASSKEY               = [sandbox passkey from Test Data]
+MPESA_BASE_URL              = https://sandbox.safaricom.co.ke
+MPESA_STK_CALLBACK_URL      = https://YOUR-APP.onrender.com/mpesa/callback
+
+Your code specifically requires the shortcode and passkey before it will perform STK Push.
+
+If you cannot find them
+
+Don't guess the values. Send me a screenshot of the Daraja Sandbox app's Test Data/Simulator page (hide your Consumer Secret if it appears), and I'll point out exactly which value is the shortcode and which is the passkey.
+
+    It contains no accidental explanatory text such as Yes — ....
+                                                           ^
+SyntaxError: invalid character '—' (U+2014)
 ==> Exited with status 1
-==> Common ways to troubleshoot your deploy: https://render.com/docs/troubleshooting-deploys 
-==> Running 'uvicorn main:app --host 0.0.0.0 --port $PORT' fix this once and for all im tired
+==> Common ways to troubleshoot your deploy: https://render.com/docs/troubleshooting-deploys
+==> Running 'uvicorn main:app --host 0.0.0.0 --port $PORT'
 
-You're right to be frustrated. I checked the actual GitHub commit ff600df this time, rather than assuming the uploaded file was what Render was running.
+Yes. This time I checked the actual main.py file itself, not just the Render error.
 
-I found the real problem
-
-The main.py in GitHub at ff600df is corrupted with our previous chat/document text.
-
-GitHub reports that main.py is 7,872 lines / 151 KB.
-
-And the very beginning of the raw GitHub file is literally:
-
-Pasted text.txt
-Document
-confirm this main py for me...
-...
-Pasted text(3).txt
-Document
-I checked the uploaded main.py...
-
-That is not Python.
-
-So Render's:
-
-SyntaxError: unterminated string literal (detected at line 16)
-
-is completely explained. Render is trying to execute the conversation text that got committed into main.py.
-
-I have the clean replacement
-
-The clean main.py you uploaded here is 3,635 lines, starts correctly with Python imports, and I have independently run:
+The file I have is 3,617 lines, starts with valid Python imports, and I ran:
 
 python -m py_compile main.py
 
-Result: PASS — no syntax error.
+Result:
 
-Its beginning is correctly:
+COMPILE_OK
+
+I also checked it for the explanatory text that has been causing your deployment failures, including Yes —, SyntaxError, and similar text. None is present in this file.
+
+The current file also contains the M-Pesa callback implementation rather than the old placeholder callback.
+
+Use this exact file
+
+Download the verified full main.py
+
+Do not copy it from a chat response. Download that file and replace the main.py in GitHub with it.
+
+Then commit/push it and deploy.
+
+Important
+
+Your Render error:
+
+SyntaxError: invalid character '—'
+
+is not coming from this verified file. That means the version currently being deployed from GitHub contains different contents than the clean file I just checked.
+
+The beginning of the verified file is literally:
 
 import os
 import secrets
@@ -101,74 +148,26 @@ import threading
 import time
 import uuid
 import logging
-import smtplib
-import ssl
-import re
-import sqlite3
 
+and it compiles successfully.
 
-from datetime import (
-    datetime,
-    timedelta,
-    timezone,
-    date,
-    time as dtime
-)
+After replacing GitHub
 
-That is the file we should use.
+Do this in order:
 
-Download this exact replacement
+Replace GitHub main.py with the downloaded file.
+Commit it.
+Confirm the commit contains only Python code in main.py.
+Deploy that commit on Render.
+Do not manually paste explanatory text into main.py.
+Once the application boots, we deal with the Daraja Sandbox variables.
 
-Download the verified clean main.py
+Your existing application functionality is preserved in this file; I am not telling you to downgrade or replace the application with a simplified version. The file contains the existing authentication, dashboard, uploads, orders, downloads, and M-Pesa callback architecture.
 
-Do this exactly
-Open GitHub → Beat-Hub.
-Open main.py.
-Replace the entire contents with the downloaded main.py.
-Commit it with something like:
-Replace corrupted main.py with verified Python version
-Push/commit.
-Let Render deploy the new commit.
-Do not redeploy ff600df again.
-
-The important point is replace the entire file, not just line 16. The GitHub copy contains thousands of lines of conversation material, so fixing one syntax error would only expose another one.
-
-And don't change M-Pesa yet
-
-The M-Pesa MPESA_CONSUMER_KEY error is a separate configuration issue. First we need Render to successfully start:
-
-Running 'uvicorn main:app --host 0.0.0.0 --port $PORT'
-INFO: Application startup complete
-
-Only after that should we deal with the Render M-Pesa variables.
-
-Also, the clean main.py retains the existing checkout → mpesa.stk_push() flow and the callback/payment completion logic rather than downgrading the BeatHub functionality.
-
-This time the root cause is confirmed: ff600df's GitHub main.py itself is contaminated.
+The syntax-error problem is now isolated: get this exact verified file into GitHub.
 
 main.py
 Code
-is this full updated
-
-Yes — the main.py I referenced is the full file, not a partial snippet.
-
-It is the clean replacement for the corrupted GitHub version, and it is intended to replace the entire main.py in GitHub.
-
-One important distinction: “full updated” means the complete clean version I have from the uploaded file; it does not mean I added new changes beyond that file. I don't want to falsely claim features were added if they aren't actually in the source.
-
-If you want, I can also 
-audit the entire file before you deploy for:
-
-Python syntax errors
-missing imports
-Render startup issues
-M-Pesa configuration/code
-database initialization
-routes/endpoints
-anything accidentally corrupted or truncated
-
-and then give you 
-one final verified main.py with no downgrade.
 
 Library
 /
