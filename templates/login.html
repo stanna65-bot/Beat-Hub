@@ -8,7 +8,7 @@
     <h1>Welcome back</h1>
 
     {% if error %}
-    <p style="color:var(--pink)">{{ error }}</p>
+        <p style="color:var(--pink)">{{ error }}</p>
     {% endif %}
 
     <form method="post" autocomplete="on" id="loginForm">
@@ -18,6 +18,7 @@
             type="email"
             id="email"
             name="email"
+            value="{{ saved_email or '' }}"
             autocomplete="username"
             autocapitalize="none"
             spellcheck="false"
@@ -68,45 +69,32 @@
 <script>
 (function () {
     const email = document.getElementById("email");
-    const password = document.getElementById("password");
     const remember = document.getElementById("remember_me");
     const form = document.getElementById("loginForm");
 
-    const savedEmail = localStorage.getItem("beathub_login_email");
-    const rememberChoice = localStorage.getItem("beathub_remember_me");
-
     /*
-     * Email is remembered for convenience.
-     * BeatHub never stores the user's password here.
+     * The backend remembers the last successfully used email
+     * in a BeatHub cookie. This local setting only remembers
+     * the user's checkbox preference.
+     *
+     * Passwords are NEVER stored by this JavaScript.
      */
-    if (savedEmail) {
-        email.value = savedEmail;
-    }
+
+    const rememberChoice = localStorage.getItem(
+        "beathub_remember_me"
+    );
 
     if (rememberChoice === "true") {
         remember.checked = true;
     }
 
     form.addEventListener("submit", function () {
-        if (email.value.trim()) {
-            localStorage.setItem(
-                "beathub_login_email",
-                email.value.trim()
-            );
-        }
 
         localStorage.setItem(
             "beathub_remember_me",
             remember.checked ? "true" : "false"
         );
 
-        /*
-         * Never save the password in localStorage.
-         * Browser password managers handle password saving securely.
-         */
-        if (!remember.checked) {
-            password.value = password.value;
-        }
     });
 })();
 </script>
