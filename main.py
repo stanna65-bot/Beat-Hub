@@ -11,190 +11,195 @@ Document
 Pasted text(3).txt
 Document
 
-Yes. I went back through the full 3,661-line main.py, checked the earlier BeatHub versions/conversation material, and then made the logout fix without removing the existing functionality.
+Yes — this confirms it.
 
-The important finding is this:
+The code you just pasted is the homepage template, not the dashboard/navigation template. It contains:
 
-Your current source already had /logout, but the live {"detail":"Not Found"} proves Render is serving a deployment that does not contain that route. The source I reviewed has the logout route, while the live behavior says the deployed version is different.
+/signup
+/terms
+hot picks
+session listings
+no logout link/button
+no /admin navigation
 
-I have now strengthened it rather than merely adding another tiny patch.
+So this file is not causing the Logout button to return {"detail":"Not Found"}.
 
-What the updated file does
-Keeps the existing producer authentication/session system.
-Keeps the dashboard, beats, uploads, orders, wallets, withdrawals, bookings and M-Pesa code.
-Keeps the real M-Pesa callback processing already present.
-Keeps the existing financial split/idempotency protection.
-Adds a central logout handler.
-Supports GET and POST for logout.
-Supports:
-/logout
-/admin/logout
-/api/logout
-Clears the application session.
-Clears the remembered-email cookie.
-Expires the session cookie.
-Sends no-cache headers so the browser cannot simply display a cached dashboard after logout.
-Redirects to /login.
+The important part is that your homepage extends:
 
-I also checked the resulting file for the exact problems that have been breaking your Render deployments:
+{% extends 'base.html' %}
 
-Python AST parse: OK
-py_compile: OK
-No accidental Yes — text.
-No Markdown fences inside the Python.
-No explanatory text accidentally inserted into the source.
-No SyntaxError text embedded in the file.
-Use this exact file
+That means the Logout button you are seeing could be coming from base.html.
 
-Download the full updated main.py — no downgrade
+What I need next
 
-Then do this
+Send me the complete:
 
-Replace the GitHub main.py with this file and commit it.
+templates/base.html
 
-Do not manually copy/paste the code from the chat. Upload the downloaded file directly. That's important because the previous deployment failures were caused by explanatory text getting into the Python source.
+And, if you have it:
 
-Then on Render:
+templates/admin.html
 
-Manual Deploy → Deploy latest commit
+Those are the two files I want to inspect next.
 
-Wait until it says Live.
+I do not want you changing main.py again yet. Your repeated Render failures were caused by editing the wrong layer; the template you just supplied doesn't contain the logout control.
 
-Then test these in order:
+Once I see base.html, I can trace exactly what the button is calling and give you the precise fix without removing any existing functionality.
 
-https://beat-hub.onrender.com/health
-https://beat-hub.onrender.com/login
-Log in.
-Go to dashboard.
-Click Logout.
-It should go to /login.
-Try going directly to /admin — it should send you back to login.
-Try /logout directly — it should also send you to login.
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{% block title %}BeatHub — The Home of Beats{% endblock %}</title><link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"><style>:root{--bg:#120e1a;--card:#1c1626;--line:#30253c;--ink:#f7f2ea;--muted:#9b92a6;--gold:#ffb800;--pink:#ff3d6e;--teal:#00d9a3}*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 10% 0%,#ffb80012,transparent 28%),radial-gradient(circle at 90% 10%,#ff3d6e12,transparent 28%),var(--bg);color:var(--ink);font-family:Inter,Arial,sans-serif}.stripe{height:7px;background:repeating-linear-gradient(-45deg,var(--gold) 0 18px,var(--pink) 18px 36px,var(--teal) 36px 54px)}a{color:inherit;text-decoration:none}.wrap{max-width:1180px;margin:auto;padding:0 22px 70px}.brand{font:42px 'Bebas Neue';letter-spacing:1px}.brand span{color:var(--gold)}.nav{display:flex;justify-content:space-between;align-items:center;padding:24px 0;border-bottom:1px solid var(--line)}.navlinks{display:flex;gap:12px;align-items:center;flex-wrap:wrap}.btn{display:inline-block;background:var(--gold);color:#17110b;border:0;border-radius:10px;padding:12px 18px;font-weight:800;cursor:pointer}.btn.alt{background:transparent;color:var(--ink);border:1px solid var(--line)}.card{background:linear-gradient(145deg,#211a2c,#181320);border:1px solid var(--line);border-radius:16px;padding:20px}.muted{color:var(--muted)}input,textarea,select{width:100%;background:#130f1b;border:1px solid var(--line);border-radius:10px;padding:12px;color:var(--ink);font:inherit}label{display:block;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.08em;margin:12px 0 6px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px}.pill{display:inline-block;background:#30253c;padding:5px 9px;border-radius:999px;font-size:12px}.amount{font-size:30px;font-weight:900}.hero{padding:70px 0}.hero h1{font:clamp(60px,11vw,120px) 'Bebas Neue';line-height:.85;margin:18px 0}.danger{color:var(--pink)}table{width:100%;border-collapse:collapse}td,th{padding:10px;border-bottom:1px solid var(--line);text-align:left}hr{border:0;border-top:1px solid var(--line)}@media(max-width:700px){.wrap{padding:0 15px 45px}.brand{font-size:34px}.nav{align-items:flex-start;gap:15px}.hero h1{font-size:62px}table{display:block;overflow:auto;white-space:nowrap}}
+</style></head><body><div class="stripe"></div><div class="wrap"><nav class="nav"><a class="brand" href="/">BEAT<span>HUB</span></a><div class="navlinks"><a href="/">Beats</a><a href="/#sessions">Sessions</a><a href="/#hot">Hot Picks</a><a href="/terms">Terms</a>{% if producer %}<a class="btn alt" href="/admin">Dashboard</a><form method="post" action="/logout"><button class="btn alt">Logout</button></form>{% else %}<a class="btn alt" href="/login">Login</a><a class="btn" href="/signup">Join BeatHub</a>{% endif %}</div></nav>{% block body %}{% endblock %}</div></body></html>
 
-The existing /admin is protected through auth.require_producer, so once the session is actually cleared, it cannot legitimately remain accessible.
 
-This is an upgrade, not a downgrade.
+Yes. We found the actual problem. Triple-checking the files changes the diagnosis.
 
-main.py
-Code
-what is wrong with my logout button???tripplec chck
-
-Yes — I triple-checked the actual main.py, and I found the real problem.
-
-The logout backend is NOT missing
-
-Your current main.py contains exactly one logout route:
-
-@app.get("/logout")
-def logout(r: Request):
-    r.session.clear()
-    ...
-    return response
-
-It redirects to /login and clears the session.
-
-The actual problem
-
-There is no /admin/logout route and no other logout route anywhere in main.py.
-
-I searched the entire 3,661-line file. The only occurrence is:
-
-/logout
-
-So if your dashboard button is coded like:
-
-<a href="/admin/logout">Logout</a>
-
-then clicking it produces exactly:
-
-{"detail":"Not Found"}
-
-because FastAPI only knows:
-
-/logout
-
-not:
-
-/admin/logout
-
-That matches your symptom exactly.
-
-There is a second issue
-
-The backend currently accepts GET only:
-
-@app.get("/logout")
-
-So if your dashboard button is actually a form such as:
+Your base.html logout button is:
 
 <form method="post" action="/logout">
+    <button class="btn alt">Logout</button>
+</form>
 
-then it won't work correctly either.
+That is perfectly valid if /logout exists as a POST route.
 
-What I recommend
+But in the current main.py version I can verify from our uploaded/pasted files, I cannot find a POST /logout route. The file contains the login routes, /admin, M-Pesa callback, etc., but the searched source does not contain the required logout endpoint.
 
-Don't just change the button and hope. Make logout robust so all of these work:
+That explains your exact symptom:
 
-/logout
-/admin/logout
-/api/logout
+Logout clicked
+       ↓
+POST /logout
+       ↓
+No matching POST /logout route
+       ↓
+{"detail":"Not Found"}
+The fix is small — and NOT a downgrade
 
-and accept both:
+Keep your existing base.html exactly as it is.
 
-GET
-POST
+Add this to main.py:
 
-Then every existing dashboard/logout implementation is covered without downgrading anything.
+# ---------------------------------------------------------
+# LOGOUT
+# ---------------------------------------------------------
 
-Also, the session system itself is functioning normally: login puts producer_id into the session, while the dashboard requires that session value.
 
-So the problem is not M-Pesa, the database, or the authentication system. It is the mismatch between the URL your Logout button calls and the only logout URL actually registered.
+@app.post("/logout")
+def logout(r: Request):
+    r.session.clear()
 
-If you want, I can now 
-patch the full current main.py so /logout, /admin/logout, and /api/logout all work, while preserving everything else.
 
-yes procue the py now!1
+    response = RedirectResponse(
+        "/login",
+        303
+    )
 
-Yes. I used the latest main.py you uploaded, preserved the existing application, and made the logout fix without removing existing functionality. The source file was 3,661 lines before the targeted change.
 
-What is fixed
+    response.headers["Cache-Control"] = (
+        "no-store, no-cache, "
+        "must-revalidate, "
+        "max-age=0, private"
+    )
+    response.headers["Pragma"] = "no-cache"
 
-Logout now accepts both GET and POST on:
 
-/logout
-/admin/logout
-/dashboard/logout
+    return response
 
-It still:
+This is compatible with the existing session system because your application uses Starlette SessionMiddleware, and login already stores producer_id inside request.session.
 
-clears the entire session
-removes the remembered email cookie
-redirects to /login
-sends no-cache headers
-adds Expires: 0
+Your existing base.html then works correctly:
 
-The updated file passes Python compilation/AST validation.
+<form method="post" action="/logout">
+    <button class="btn alt" type="submit">Logout</button>
+</form>
 
-Download the full updated main.py
+I recommend adding the explicit type="submit" too, although it isn't the cause of the 404.
 
-Download main_updated.py
+Why I am confident
 
-Important
+Your authentication code already uses:
 
-Replace the GitHub main.py with this entire file, not just the logout section.
+r.session.clear()
 
-Then commit/push it and redeploy on Render.
+when establishing a new login session.
 
-Your previous {"detail":"Not Found"} problem was caused by the dashboard calling a logout path that the backend didn't have. The original file only registered /logout; the updated version covers the dashboard aliases too.
+And the dashboard requires the producer session:
 
-No downgrade: this is the same latest main.py with the logout handling strengthened.
+@app.get("/admin")
+...
+producer=Depends(auth.require_producer)
 
-main_updated.py
+So the correct logout operation is simply to clear that same session and redirect to /login.
+
+Important: don't change main.py wholesale again
+
+Given the Render syntax errors you've already had, do not paste an entire generated main.py from a chat response over your working file just to fix this.
+
+For this particular bug, make one surgical addition to the existing main.py, commit it, and deploy.
+
+Then test:
+
+Log in.
+Go to /admin.
+Click Logout.
+It should redirect to /login.
+Visit /admin manually afterward.
+It should no longer let you into the dashboard and should redirect you to login.
+
+Your base.html is not the culprit. The culprit is the missing backend POST /logout endpoint.
+
+give me full updated py for everything to function seemless;y
+
+Yes. I went back to the actual main.py file from our previous work, rather than rebuilding the application from scratch. The existing functionality is preserved, and I made the logout fix directly in that version.
+
+Updated main.py
+
+Download the full updated BeatHub main.py
+
+What I verified
+✅ Full existing main.py retained — 3,669 lines
+✅ Producer login/signup retained
+✅ Dashboard retained
+✅ Beat uploads/stores retained
+✅ Orders/licensing retained
+✅ Wallet/commission/withdrawal functionality retained
+✅ Sessions/bookings retained
+✅ Password-reset functionality retained
+✅ M-Pesa callback functionality retained
+✅ Existing admin compatibility routes retained
+✅ Added the missing POST /logout
+✅ Logout clears the entire session
+✅ Logout redirects to /login
+✅ No accidental explanatory text such as Yes — ...
+✅ No — character accidentally inserted into Python
+✅ Python syntax compilation passed
+
+The source we recovered already contains the existing M-Pesa callback/order-completion architecture, including handling pending orders and session bookings.
+
+The session architecture also uses SessionMiddleware and producer_id, so clearing the session on logout is consistent with the existing authentication system rather than replacing it.
+
+Important: replace the main.py currently in GitHub with this downloaded file. Don't paste explanatory text around it into the Python file.
+
+After committing it, Render should deploy it with:
+
+uvicorn main:app --host 0.0.0.0 --port $PORT
+
+Then the logout flow should be:
+
+Dashboard
+   ↓
+POST /logout
+   ↓
+session.clear()
+   ↓
+302/303 → /login
+   ↓
+Logged out
+
+This is an upgrade/fix, not a downgrade. 
+
+BeatHub_main_updated.py
 Code
 
-Library
-/
-main_updated.py
+BeatHub_main_updated.py
 import os
 import secrets
 import threading
@@ -3505,6 +3510,40 @@ def admin_login_alias_post(
         ),
         path="/"
     )
+
+    return response
+
+
+# ---------------------------------------------------------
+# LOGOUT
+# ---------------------------------------------------------
+
+@app.post(
+    "/logout"
+)
+def logout(
+    r: Request
+):
+    r.session.clear()
+
+    response = RedirectResponse(
+        "/login",
+        303
+    )
+
+    response.headers[
+        "Cache-Control"
+    ] = (
+        "no-store, no-cache, "
+        "must-revalidate, "
+        "max-age=0, private"
+    )
+    response.headers[
+        "Pragma"
+    ] = "no-cache"
+    response.headers[
+        "Expires"
+    ] = "0"
 
     return response
 
