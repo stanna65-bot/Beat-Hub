@@ -11,100 +11,133 @@ Document
 Pasted text(3).txt
 Document
 
-Upgrade — not a downgrade, provided the version we're fixing preserves the existing Beat-Hub features.
+Yes. Since you want to see the new main.py changes, don't use Restart service. Restarting uses the same commit currently deployed, so it won't pick up a new GitHub commit.
 
-The goal is:
+Do this
+Make sure the updated main.py is committed and pushed to your GitHub repository:
+stanna65-bot/Beat-Hub
+Open your Render service.
+Click Deploys.
+Click Manual Deploy.
+Choose Deploy latest commit.
+Confirm Deploy.
 
-✅ Keep the existing functionality
-✅ Keep the existing UI/payment flow
-✅ Keep M-Pesa STK Push
-✅ Keep Render deployment compatibility
-✅ Use Render environment variables for credentials/secrets
-✅ Fix the accidental explanatory text being inserted into main.py
-✅ Fix the unterminated-string/syntax errors
-✅ Support the correct sandbox/production M-Pesa endpoints
-✅ Handle missing M-Pesa configuration cleanly instead of crashing
-❌ No removal of existing features
-❌ No replacing the app with a stripped-down example
-❌ No hard-coding M-Pesa secrets into main.py
+Render will pull the latest commit from the branch your service is connected to and build it.
 
-But: I don't currently have the actual full main.py contents available in this conversation context. I should not pretend I can produce a guaranteed full, no-downgrade replacement from the error logs alone.
+Open your Render service
 
-If you attach/upload the current main.py (or the repository/file from the relevant commit), I can inspect the whole thing and return a complete corrected main.py, preserving its existing functionality and fixing the syntax/M-Pesa configuration issues rather than rebuilding a smaller version.
+⚠️ One important thing
 
-{"detail":"Not Found"} logout button
+The file I gave you is currently in your ChatGPT workspace. It is not automatically pushed to GitHub. You need to replace main.py in GitHub with that updated file first.
 
-Yes — the {"detail":"Not Found"} when you click Logout is a real route problem.
+So the order is:
 
-I checked the main_updated.py we have in the conversation, and it does not contain a /logout route. The file does have the session/authentication system, including clearing session state during login, but there is no logout endpoint for a button to call.
+Download updated main.py → replace GitHub main.py → Commit changes → Render → Manual Deploy → Deploy latest commit.
 
-Fix
+After Render says Live, open your site and test:
 
-Add this to main.py:
+/
+login
+dashboard
+Logout
+M-Pesa payment page
 
-# ---------------------------------------------------------
-# LOGOUT
-# ---------------------------------------------------------
+If Render still fails, don't keep redeploying repeatedly. Send me the new deploy log and we'll fix the actual error before another deployment.
 
+https://beat-hub.onrender.com 
+ 
+when i click it settles me to dashboard which i cant log out
 
-@app.get("/logout")
-def logout(request: Request):
-    request.session.clear()
+I checked the live BeatHub site. The deployed homepage is currently reachable and shows the normal public navigation, including Login and Join BeatHub. 
 
+If your browser immediately takes you to the dashboard, the most likely issue is that your browser still has the old BeatHub session cookie. That can make it look as though the logout change isn't working.
 
-    response = RedirectResponse(
-        "/login",
-        status_code=303
-    )
+Do this first — no code change yet
+Open https://beat-hub.onrender.com in an Incognito/Private window.
+You should see the public BeatHub homepage with Login rather than being taken into your dashboard.
+If that works, the deployment is probably fine and your normal browser has a stale session.
+In your normal Chrome window, clear cookies/site data only for beat-hub.onrender.com, then reload.
+If you still cannot log out
 
+Try going directly to:
 
-    response.delete_cookie("beathub_last_email")
+https://beat-hub.onrender.com/logout
 
+If that does not log you out, then I want to fix the actual deployed authentication flow rather than keep changing things blindly.
 
-    return response
+Don't redeploy yet. Tell me what happens when you open /logout — especially whether it gives 404, Not Found, redirects back to dashboard, or actually logs you out.
 
-Then your template/button should point to:
+go thru the main again twice and other py we had in chat and fix the issue once and for all no downgrades {"detail":"Not Found"}
 
-<a href="/logout">Logout</a>
-Important
+Yes. I went back through the full 3,661-line main.py, checked the earlier BeatHub versions/conversation material, and then made the logout fix without removing the existing functionality.
 
-This is not a downgrade. It is a missing compatibility route being restored. Your existing session system remains intact, and request.session.clear() properly removes the logged-in producer session.
+The important finding is this:
 
-The reason you're currently seeing:
+Your current source already had /logout, but the live {"detail":"Not Found"} proves Render is serving a deployment that does not contain that route. The source I reviewed has the logout route, while the live behavior says the deployed version is different.
 
-{"detail":"Not Found"}
+I have now strengthened it rather than merely adding another tiny patch.
 
-is simply that FastAPI receives a request for /logout but the deployed application has no matching route.
+What the updated file does
+Keeps the existing producer authentication/session system.
+Keeps the dashboard, beats, uploads, orders, wallets, withdrawals, bookings and M-Pesa code.
+Keeps the real M-Pesa callback processing already present.
+Keeps the existing financial split/idempotency protection.
+Adds a central logout handler.
+Supports GET and POST for logout.
+Supports:
+/logout
+/admin/logout
+/api/logout
+Clears the application session.
+Clears the remembered-email cookie.
+Expires the session cookie.
+Sends no-cache headers so the browser cannot simply display a cached dashboard after logout.
+Redirects to /login.
 
-Do not change the M-Pesa code for this issue. This logout fix is independent of the Daraja integration.
+I also checked the resulting file for the exact problems that have been breaking your Render deployments:
 
-If you want, I can take the full main_updated.py we already have and produce a complete corrected main.py with this logout fix included, without removing the existing M-Pesa/callback/dashboard/upload functionality.
+Python AST parse: OK
+py_compile: OK
+No accidental Yes — text.
+No Markdown fences inside the Python.
+No explanatory text accidentally inserted into the source.
+No SyntaxError text embedded in the file.
+Use this exact file
 
-i want full updated no downgrades
+Download the full updated main.py — no downgrade
 
-Yes. I used the full main_updated.py you previously provided as the base and made a targeted upgrade rather than replacing or downgrading the application.
+Then do this
 
-What I changed
-Preserved the existing 3,635-line application and its existing functionality.
-Added the missing GET /logout route.
-Logout now:
-clears the Starlette session;
-removes the beathub_last_email cookie;
-sends no-cache headers;
-redirects cleanly to /login.
-I also checked the resulting Python file with py_compile — it passes syntax compilation successfully.
-I did not remove or downgrade the existing dashboard, beat uploads, Hot Pick, sessions/bookings, wallet, withdrawals, financial split, M-Pesa checkout, callbacks, or authentication logic. The existing file contains those systems.
-Full updated main.py
+Replace the GitHub main.py with this file and commit it.
 
-Download the full updated main.py
+Do not manually copy/paste the code from the chat. Upload the downloaded file directly. That's important because the previous deployment failures were caused by explanatory text getting into the Python source.
 
-This is the file I would use for the next GitHub commit.
+Then on Render:
 
-Important: don't paste any explanatory text into main.py. Upload the downloaded file itself as main.py. That directly avoids the invalid character '—' / unterminated string literal problem you've been hitting.
+Manual Deploy → Deploy latest commit
+
+Wait until it says Live.
+
+Then test these in order:
+
+https://beat-hub.onrender.com/health
+https://beat-hub.onrender.com/login
+Log in.
+Go to dashboard.
+Click Logout.
+It should go to /login.
+Try going directly to /admin — it should send you back to login.
+Try /logout directly — it should also send you to login.
+
+The existing /admin is protected through auth.require_producer, so once the session is actually cleared, it cannot legitimately remain accessible.
+
+This is an upgrade, not a downgrade.
 
 main.py
 Code
 
+Library
+/
 main.py
 import os
 import secrets
