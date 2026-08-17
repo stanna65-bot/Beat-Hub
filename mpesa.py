@@ -11,58 +11,6 @@ Document
 Pasted text(3).txt
 Document
 
-Yes. I went back to the actual main.py file from our previous work, rather than rebuilding the application from scratch. The existing functionality is preserved, and I made the logout fix directly in that version.
-
-Updated main.py
-
-Download the full updated BeatHub main.py
-
-What I verified
-✅ Full existing main.py retained — 3,669 lines
-✅ Producer login/signup retained
-✅ Dashboard retained
-✅ Beat uploads/stores retained
-✅ Orders/licensing retained
-✅ Wallet/commission/withdrawal functionality retained
-✅ Sessions/bookings retained
-✅ Password-reset functionality retained
-✅ M-Pesa callback functionality retained
-✅ Existing admin compatibility routes retained
-✅ Added the missing POST /logout
-✅ Logout clears the entire session
-✅ Logout redirects to /login
-✅ No accidental explanatory text such as Yes — ...
-✅ No — character accidentally inserted into Python
-✅ Python syntax compilation passed
-
-The source we recovered already contains the existing M-Pesa callback/order-completion architecture, including handling pending orders and session bookings.
-
-The session architecture also uses SessionMiddleware and producer_id, so clearing the session on logout is consistent with the existing authentication system rather than replacing it.
-
-Important: replace the main.py currently in GitHub with this downloaded file. Don't paste explanatory text around it into the Python file.
-
-After committing it, Render should deploy it with:
-
-uvicorn main:app --host 0.0.0.0 --port $PORT
-
-Then the logout flow should be:
-
-Dashboard
-   ↓
-POST /logout
-   ↓
-session.clear()
-   ↓
-302/303 → /login
-   ↓
-Logged out
-
-This is an upgrade/fix, not a downgrade. 
-
-BeatHub_main_updated.py
-Code
-still same error,check other pys and change aacordingly
-
 Yes. I went through the actual files again, and I found the real compatibility problem.
 
 What was actually wrong
@@ -151,6 +99,76 @@ So the goal is:
 existing features + fixes → not existing features removed.
 
 One important distinction: I can say these files are not intentionally downgraded, but I would not claim that every feature from every historical chat version is preserved unless we compare against that exact historical source. The files currently available are the authoritative basis for what was fixed.
+
+no, no, no, tripple check the codes you providing why i cant logout still
+
+You're right to make me triple-check it. I found an important weakness in the previous fix.
+
+The logout code is now hardened
+
+Your base.html sends POST /logout, and the updated main.py now explicitly supports both GET and POST:
+
+@app.api_route(
+    "/logout",
+    methods=["GET", "POST"]
+)
+
+It now does three things:
+
+Clears the entire FastAPI session:
+
+r.session.clear()
+
+Explicitly expires the session cookie:
+
+response.delete_cookie(
+    key="session",
+    path="/"
+)
+Redirects to / with aggressive no-cache headers, preventing the browser from showing the old dashboard from cache.
+
+I also confirmed that SessionMiddleware is actually installed in this main.py, so the session mechanism required by logout is present.
+
+The previous logout implementation only registered POST /logout; the new one is more defensive.
+
+I also checked the login behavior
+
+Your /login page redirects to /admin only when auth.current_producer(r) finds a valid producer session.
+
+So after the session is genuinely cleared, /login should not bounce you back to the dashboard.
+
+Files
+
+Use this exact one for Render/GitHub:
+
+Download corrected full main.py
+
+And the M-Pesa module:
+
+Download corrected mpesa.py
+
+Both compile successfully.
+
+One very important thing
+
+If you deploy this exact main.py and clicking Logout still gives {"detail":"Not Found"}, then the problem is not the logout code anymore.
+
+It means Render is not running this main.py (wrong branch, wrong root directory, wrong commit, or deployment hasn't actually picked up the file).
+
+After pushing this file, check Render's deployment commit and make sure it is the new commit—not ff600df, 19c5427, or cb91aca.
+
+Do not keep changing the logout HTML yet. Your existing:
+
+<form method="post" action="/logout">
+    <button class="btn alt">Logout</button>
+</form>
+
+is correct for this route.
+
+main.py
+Code
+mpesa.py
+Code
 
 Library
 /
