@@ -780,6 +780,36 @@ def beat(
     )
 
 
+@app.get('/admin/login')
+def admin_login_alias(r:Request):
+    """Compatibility route: /admin/login is the producer login entry point."""
+    if _load_producer_from_session(r):
+        return RedirectResponse('/admin',303)
+    return RedirectResponse('/login',303)
+
+
+@app.post('/admin/login')
+def admin_login_alias_post(r:Request, identifier:str|None=Form(None), email:str|None=Form(None), username:str|None=Form(None), password:str=Form(...), remember_me:str|None=Form(None)):
+    """Compatibility POST route for older admin login forms."""
+    login_value=(identifier or email or username or '').strip()
+    lookup=login_value.casefold()
+    if not login_value or not password:
+        return render_no_store('login.html',r,error='Enter your email/producer name and password.',saved_email=login_value)
+    c=get_db()
+    try:
+        p=c.execute("SELECT * FROM producers WHERE lower(trim(email))=? OR lower(trim(slug))=? OR lower(trim(name))=? ORDER BY id ASC LIMIT 1",(lookup,lookup,lookup)).fetchone()
+    finally:
+        c.close()
+    if not p or not _verify_login_password(password,p['password_hash']):
+        return render_no_store('login.html',r,error='Incorrect email/producer name or password.',saved_email=login_value)
+    r.session.clear()
+    r.session['producer_id']=int(p['id'])
+    r.session['remember_me']=(remember_me=='true')
+    response=RedirectResponse('/admin',303)
+    response.set_cookie(key='beathub_last_email',value=p['email'],max_age=60*60*24*365,httponly=False,samesite='lax',secure=os.getenv('SESSION_HTTPS_ONLY','false').lower()=='true',path='/')
+    return response
+
+
 @app.get('/admin')
 def admin(
     r:Request,
