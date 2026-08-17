@@ -1,11 +1,15 @@
 {% extends 'base.html' %}
 
 {% block body %}
-<div style="max-width:460px;margin:80px auto" class="card">
+<div style="max-width:520px;margin:60px auto" class="card">
 
     <a class="brand" href="/">BEAT <span>HUB</span></a>
 
-    <h1>Welcome back</h1>
+    <h1>Create your producer account</h1>
+
+    <p class="muted">
+        Join BeatHub and start sharing your beats, building your audience and earning from your music.
+    </p>
 
     {% if error %}
     <p style="color:var(--pink)">{{ error }}</p>
@@ -13,11 +17,21 @@
 
     <form method="post" autocomplete="on">
 
-        <label>Email</label>
+        <label>Producer name</label>
+        <input
+            type="text"
+            name="name"
+            placeholder="Your producer or stage name"
+            autocomplete="name"
+            required
+        >
+
+        <label>Email address</label>
         <input
             type="email"
             name="email"
-            autocomplete="username"
+            placeholder="you@example.com"
+            autocomplete="email"
             autocapitalize="none"
             spellcheck="false"
             required
@@ -27,36 +41,46 @@
         <input
             type="password"
             name="password"
-            autocomplete="current-password"
+            placeholder="At least 8 characters"
+            autocomplete="new-password"
+            minlength="8"
             required
         >
 
-        <label style="display:flex;align-items:center;gap:8px;margin:16px 0;cursor:pointer">
+        <label>Confirm password</label>
+        <input
+            type="password"
+            name="confirm_password"
+            placeholder="Repeat your password"
+            autocomplete="new-password"
+            minlength="8"
+            required
+        >
+
+        <label style="display:flex;align-items:flex-start;gap:10px;margin:18px 0;cursor:pointer">
             <input
                 type="checkbox"
-                name="remember_me"
+                name="accept_terms"
                 value="true"
-                style="width:auto"
+                required
+                style="width:auto;margin-top:4px"
             >
-            <span>Remember me</span>
+            <span>
+                I agree to the
+                <a href="/terms" style="color:var(--teal)">Terms &amp; Conditions</a>.
+            </span>
         </label>
 
         <button class="btn" type="submit">
-            Login
+            Create account
         </button>
 
     </form>
 
-    <p>
-        <a href="/forgot-password">
-            Forgot password?
-        </a>
-    </p>
-
-    <p class="muted">
-        New producer?
-        <a href="/signup" style="color:var(--teal)">
-            Create an account
+    <p class="muted" style="margin-top:20px">
+        Already have an account?
+        <a href="/login" style="color:var(--teal)">
+            Login
         </a>
     </p>
 
