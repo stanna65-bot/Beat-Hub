@@ -1,6 +1,6 @@
 import os
 import uuid
-import base64
+import base64a
 import hashlib
 from datetime import datetime
 
