@@ -11,49 +11,6 @@ Document
 Pasted text(3).txt
 Document
 
-Exactly. Those are the two STK Push endpoint URLs:
-
-Sandbox: https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest
-Production: https://api.safaricom.co.ke/mpesa/stkpush/v1/processrequest
-
-For your current BeatHub setup, use Sandbox until the Daraja test payment works.
-
-One important point: you don't normally put either of those URLs into the Render environment-variable fields unless the code specifically has an MPESA_STK_URL variable. Your current code constructs the STK URL from MPESA_BASE_URL.
-
-So the configuration should effectively be:
-
-MPESA_BASE_URL=https://sandbox.safaricom.co.ke
-
-and the application builds:
-
-https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest
-
-Your production switch later becomes:
-
-MPESA_BASE_URL=https://api.safaricom.co.ke
-Your immediate Render setup
-
-Use:
-
-MPESA_CONSUMER_KEY=your_sandbox_consumer_key
-MPESA_CONSUMER_SECRET=your_sandbox_consumer_secret
-MPESA_SHORTCODE=your_sandbox_shortcode
-MPESA_PASSKEY=your_sandbox_passkey
-MPESA_BASE_URL=https://sandbox.safaricom.co.ke
-MPESA_STK_CALLBACK_URL=https://YOUR-APP.onrender.com/mpesa/callback
-
-Do not paste your Consumer Secret or Passkey here. Put them directly into Render's secret-value fields.
-
-And the error you originally showed:
-
-Missing required M-Pesa configuration: MPESA_CONSUMER_KEY
-
-means Render currently isn't supplying that variable to the running application. The code explicitly checks for it before obtaining the OAuth token.
-
-If you give me your Render app URL, I can tell you the exact callback URL to enter, and we can then go through the Render variables one-by-one without changing or downgrading the existing code.
-
-no passkey and shortcode help
-
 Yes — the shortcode and passkey are the confusing part. For Sandbox, you don't make up either one.
 
 Safaricom's Daraja portal provides a sandbox environment specifically for testing/simulation.
@@ -165,6 +122,93 @@ Once the application boots, we deal with the Daraja Sandbox variables.
 Your existing application functionality is preserved in this file; I am not telling you to downgrade or replace the application with a simplified version. The file contains the existing authentication, dashboard, uploads, orders, downloads, and M-Pesa callback architecture.
 
 The syntax-error problem is now isolated: get this exact verified file into GitHub.
+
+main.py
+Code
+
+Deploy** failed** for cb91aca: Update main.py
+Exited with status 1 while running your code. Check your deploy logs for more information.
+August 17, 2026 at 11:57 PM tripplec check and fix the issue once and for all im tired
+
+Yes — I found the actual cause this time by checking the GitHub commit cb91aca itself.
+
+The problem is confirmed
+
+The GitHub main.py at cb91aca contains chat/conversation text at the very top of the Python file.
+
+For example, GitHub currently has lines like:
+
+Pasted text.txt
+Document
+confirm this main py for me...
+
+and then later:
+
+Yes — this error...
+SyntaxError: invalid character '—'
+
+before the real Python code begins.
+
+So Render is 100% correct to fail. This isn't an M-Pesa configuration problem and isn't a Python 3.14 problem. The GitHub file itself is contaminated.
+
+I triple-checked the clean replacement
+
+The clean main.py I have locally:
+
+3,617 lines
+68,497 bytes
+starts directly with import os
+contains none of the accidental chat text
+contains no SyntaxError text
+contains no Render log text
+contains no Markdown fences
+passes Python compilation successfully:
+compile: OK
+
+I also checked specifically for the exact contamination that has been repeatedly breaking your deployments. All checks are clean.
+
+Use this file
+
+Download the triple-checked main.py
+
+Do not copy/paste portions of it into GitHub. Replace the entire GitHub main.py with this file.
+
+Then:
+
+Open GitHub → stanna65-bot/Beat-Hub
+Open main.py
+Replace the entire contents
+Upload the downloaded main.py
+Commit it with something like:
+Fix main.py syntax and remove accidental chat text
+Wait for Render to deploy that new commit.
+
+The GitHub version you're deploying right now is definitely not the clean version. GitHub itself shows the contamination before the real code.
+
+One important thing
+
+Do not change the M-Pesa variables yet.
+
+First we need Render to get past:
+
+SyntaxError
+
+Once the service successfully starts and you see something like:
+
+Application startup complete
+
+then we'll handle:
+
+MPESA_CONSUMER_KEY
+MPESA_CONSUMER_SECRET
+MPESA_SHORTCODE
+MPESA_PASSKEY
+MPESA_BASE_URL
+MPESA_STK_CALLBACK_URL
+
+The current failure happens before your application can even start, so M-Pesa credentials cannot be responsible for this particular error.
+
+This is the fix: replace the entire GitHub main.py with the verified file above.
 
 main.py
 Code
