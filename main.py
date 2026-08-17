@@ -1,334 +1,122 @@
-Today 9:46 PM
-beatstore (1).zip
-Zip Archive
-i want auto split of cash and also include features like hot picks,make then tripple check all the codes for breajages or anything of the sort
-Edit
-beat-hub-updated-replacement(1).zip
-Zip Archive
-beat-hub-updated-replacement(2).zip
-Zip Archive
+Yes bro. The template itself is fine; {"detail":"Login required"} means the /admin route is rejecting the request before this page can render. So this needs a backend/auth fix, not a downgrade of the dashboard.
 
-Messages can suggest dates/times, but I strongly recommend the system does not automatically block a calendar slot merely because someone typed a date in chat. That would cause false bookings and abuse. Instead, the system can detect a proposed date/time and show a “Confirm this time” action; once confirmed, it locks the slot. i agree produce full replacement for GIT, make sure you check again so as the only limiting feature is gthe real mpesa otherwise everything else perfect
+The important part is to make sure:
 
-files (4).zip
-Zip Archive
-the previous colur was so beautiful and the achitecture but this you provided is detailed as i wanted although i am missing the link
-beat-hub-updated-replacement(3).zip
-Zip Archive
-and dont forget the link to share with artists, check the chat we had and no downgarades please or du[licates
-beat-hub-updated-replacement(1)(1).zip
-Zip Archive
-you disappointed me again, you see the colours and how this was presented, now i want my new system take the look but have the upgraded features, i hope i am making sense
-Pasted text(6).txt
+/admin only requires a valid producer/admin session.
+Successful login actually stores the session.
+The session is preserved when redirecting to /admin.
+Invalid/expired sessions redirect cleanly to login.
+Login credentials are not left stuck in the browser fields.
+We don't weaken authentication just to make the page load.
+
+If you paste/upload the current Python file containing the /admin, login, and authentication routes, I can produce the full updated replacement Python file while keeping the existing BeatHub functionality intact.
+
+{% extends 'base.html' %}
+
+{% block body %}
+<div style="max-width:460px;margin:80px auto" class="card">
+
+    <a class="brand" href="/">BEAT <span>HUB</span></a>
+
+    <p class="muted">Super Admin Control Room</p>
+
+    {% if error %}
+    <p class="danger">{{ error }}</p>
+    {% endif %}
+
+    <form method="post" autocomplete="on">
+
+        <label>Username</label>
+        <input
+            type="text"
+            name="username"
+            autocomplete="username"
+            autocapitalize="none"
+            spellcheck="false"
+            required
+        >
+
+        <label>Password</label>
+        <input
+            type="password"
+            name="password"
+            autocomplete="current-password"
+            required
+        >
+
+        <label style="display:flex;align-items:center;gap:8px;margin:16px 0;cursor:pointer">
+            <input
+                type="checkbox"
+                name="remember_me"
+                value="true"
+                style="width:auto"
+            >
+            <span>Remember me</span>
+        </label>
+
+        <button class="btn" type="submit">
+            Secure login
+        </button>
+
+    </form>
+
+</div>
+{% endblock %}
+ update and share full py
+
+Yes bro. I can update the login template and give you the full replacement .py, but I need the current Python file itself.
+
+The login HTML you just sent only controls the form. The {"detail":"Login required"} response is coming from the Python authentication/session logic, so I shouldn't invent a new backend and risk breaking your existing:
+
+Producer dashboard
+Super Admin
+Beat uploads
+M-Pesa withdrawals
+Session services
+Bookings
+Availability
+Public producer stores
+Catalogue
+Existing database/models
+
+Upload the current .py file here (the main BeatHub Python file, e.g. app.py, main.py, or whatever you're using).
+
+I'll return one complete replacement Python file, with the authentication fixed properly and without downgrading security. I'll also fix the login behavior so the username/password fields don't remain unnecessarily populated after login/logout.
+
+Pasted text(2).txt
 Document
 
-Done. I used the latest main.py you shared and produced the full updated replacement without removing your BeatHub features.
+Bro, I went through the uploaded BeatHub code and fixed the authentication path rather than weakening it.
 
-Key fixes included:
+The important problem was that the login flow was setting producer_id, but /admin depended on the separate auth.require_producer implementation. I made the main application use one canonical, database-backed session check for producer authentication. The uploaded code confirms /admin was protected by auth.require_producer, while login was separately writing producer_id into the session.
 
-Stable SESSION_SECRET support instead of generating a new secret on every restart.
-30-day session configuration.
-Signup remembers the email only.
-Login correctly passes saved_email to the template.
-Password is never stored in cookies.
-remember_me is accepted safely by the login route.
-Your existing password hash/signup/login verification flow remains intact.
-SMTP now supports your current .env names: SMTP_FROM_EMAIL and SMTP_FROM_NAME.
-All existing beats, sessions, booking, wallet, commission, Super Admin, withdrawal, download and M-Pesa routes remain in the file. The original file already had the full application structure, including the current live-callback placeholder.
+What I changed
+Fixed producer session resolution after login.
+/admin now validates the session's producer_id against the actual producer record.
+Stale/invalid producer sessions are cleared.
+Email normalization is consistent using casefold().
+Password is never modified before verification.
+Password verification failure cannot accidentally grant access.
+Signup and login use the same session structure.
+Existing BeatHub features remain in place: beats, Hot Picks, services, availability, bookings, wallet, commission splitting, withdrawals, Super Admin, downloads and M-Pesa routes.
+I did not remove or bypass authentication.
+The file passes Python syntax compilation.
+Full replacement
 
-Replace your current:
+Download BeatHub_main_login_fixed.py
 
-Beat Hub\main.py
+Replace your current main.py with that file.
 
-with this file:
+One important point: this fixes the main.py authentication/session side. Your auth.py is still a separate dependency because the existing application imports it for password hashing and Super Admin functions. The uploaded source confirms that relationship.
 
-Download the full updated main.py
+So if you still get “Incorrect email or password” after this replacement, don't create another account or change the database yet — send me your auth.py, and I'll fix the password-hash side directly without downgrading anything. 
 
-Important: keep this in .env and also set the same values on Render:
-
-SESSION_SECRET=your-long-permanent-random-secret
-SESSION_HTTPS_ONLY=false
-SESSION_MAX_AGE=2592000
-
-For Render production, SESSION_HTTPS_ONLY=true is preferable once you're only using HTTPS.
-
-main.py
-Code
-{% extends 'base.html' %}
-
-{% block body %}
-<div style="max-width:460px;margin:80px auto" class="card">
-
-    <a class="brand" href="/">BEAT <span>HUB</span></a>
-
-    <h1>Welcome back</h1>
-
-    {% if error %}
-    <p style="color:var(--pink)">{{ error }}</p>
-    {% endif %}
-
-    <form method="post" autocomplete="on" id="loginForm">
-
-        <label>Email</label>
-        <input
-            type="email"
-            id="email"
-            name="email"
-            autocomplete="username"
-            autocapitalize="none"
-            spellcheck="false"
-            required
-        >
-
-        <label>Password</label>
-        <input
-            type="password"
-            id="password"
-            name="password"
-            autocomplete="current-password"
-            required
-        >
-
-        <label style="display:flex;align-items:center;gap:8px;margin:16px 0;cursor:pointer">
-            <input
-                type="checkbox"
-                id="remember_me"
-                name="remember_me"
-                value="true"
-                style="width:auto"
-            >
-            <span>Remember me</span>
-        </label>
-
-        <button class="btn" type="submit">
-            Login
-        </button>
-
-    </form>
-
-    <p>
-        <a href="/forgot-password">
-            Forgot password?
-        </a>
-    </p>
-
-    <p class="muted">
-        New producer?
-        <a href="/signup" style="color:var(--teal)">
-            Create an account
-        </a>
-    </p>
-
-</div>
-
-<script>
-(function () {
-    const email = document.getElementById("email");
-    const password = document.getElementById("password");
-    const remember = document.getElementById("remember_me");
-    const form = document.getElementById("loginForm");
-
-    const savedEmail = localStorage.getItem("beathub_login_email");
-    const rememberChoice = localStorage.getItem("beathub_remember_me");
-
-    /*
-     * Email is remembered for convenience.
-     * BeatHub never stores the user's password here.
-     */
-    if (savedEmail) {
-        email.value = savedEmail;
-    }
-
-    if (rememberChoice === "true") {
-        remember.checked = true;
-    }
-
-    form.addEventListener("submit", function () {
-        if (email.value.trim()) {
-            localStorage.setItem(
-                "beathub_login_email",
-                email.value.trim()
-            );
-        }
-
-        localStorage.setItem(
-            "beathub_remember_me",
-            remember.checked ? "true" : "false"
-        );
-
-        /*
-         * Never save the password in localStorage.
-         * Browser password managers handle password saving securely.
-         */
-        if (!remember.checked) {
-            password.value = password.value;
-        }
-    });
-})();
-</script>
-
-{% endblock %}
- update and share full
-
-Replace your entire templates/login.html with this updated version. It works with the updated main.py by using saved_email, remembers only the email, and leaves the password blank unless the browser's own password manager autofills it.
-
-{% extends 'base.html' %}
-
-
-{% block body %}
-<div style="max-width:460px;margin:80px auto" class="card">
-
-
-    <a class="brand" href="/">BEAT <span>HUB</span></a>
-
-
-    <h1>Welcome back</h1>
-
-
-    {% if error %}
-        <p style="color:var(--pink)">{{ error }}</p>
-    {% endif %}
-
-
-    <form method="post" autocomplete="on" id="loginForm">
-
-
-        <label>Email</label>
-        <input
-            type="email"
-            id="email"
-            name="email"
-            value="{{ saved_email or '' }}"
-            autocomplete="username"
-            autocapitalize="none"
-            spellcheck="false"
-            required
-        >
-
-
-        <label>Password</label>
-        <input
-            type="password"
-            id="password"
-            name="password"
-            autocomplete="current-password"
-            required
-        >
-
-
-        <label style="display:flex;align-items:center;gap:8px;margin:16px 0;cursor:pointer">
-            <input
-                type="checkbox"
-                id="remember_me"
-                name="remember_me"
-                value="true"
-                style="width:auto"
-            >
-            <span>Remember me</span>
-        </label>
-
-
-        <button class="btn" type="submit">
-            Login
-        </button>
-
-
-    </form>
-
-
-    <p>
-        <a href="/forgot-password">
-            Forgot password?
-        </a>
-    </p>
-
-
-    <p class="muted">
-        New producer?
-        <a href="/signup" style="color:var(--teal)">
-            Create an account
-        </a>
-    </p>
-
-
-</div>
-
-
-<script>
-(function () {
-    const email = document.getElementById("email");
-    const remember = document.getElementById("remember_me");
-    const form = document.getElementById("loginForm");
-
-
-    /*
-     * The backend remembers the last successfully used email
-     * in a BeatHub cookie. This local setting only remembers
-     * the user's checkbox preference.
-     *
-     * Passwords are NEVER stored by this JavaScript.
-     */
-
-
-    const rememberChoice = localStorage.getItem(
-        "beathub_remember_me"
-    );
-
-
-    if (rememberChoice === "true") {
-        remember.checked = true;
-    }
-
-
-    form.addEventListener("submit", function () {
-
-
-        localStorage.setItem(
-            "beathub_remember_me",
-            remember.checked ? "true" : "false"
-        );
-
-
-    });
-})();
-</script>
-
-
-{% endblock %}
-This fixes the behavior you requested
-After creating an account and later logging out, the email remains visible.
-The password does not remain visible or get stored by BeatHub.
-If the user ticks Remember me, the checkbox preference remains selected.
-The browser can still offer to save/autofill the password using its own secure password manager.
-No JavaScript password storage.
-value="{{ saved_email or '' }}" matches the updated main.py login route.
-no theres an issue i want you to fix, i cant login and the email exists, produce full updated py on the matter
-
-I fixed the signup → logout → login authentication flow in your latest main.py and kept the rest of your system intact.
-
-The update:
-
-normalizes email consistently during signup and login
-uses case-insensitive email lookup
-does not alter the password before verification
-verifies against the stored password hash correctly
-validates password confirmation when supplied
-preserves email remembering
-keeps passwords out of cookies/local storage
-preserves your existing BeatHub routes and features
-
-Replace your current main.py with:
-
-Download the updated main.py
-
-After replacing it, restart locally and push/deploy to Render. Then create one fresh test account, log out, and log back in with exactly the same password.
-
-main_updated.py
+BeatHub_main_login_fixed.py
 Code
 
 Library
 /
-main_updated.py
+BeatHub_main_login_fixed.py
 import os,secrets,threading,time,uuid,smtplib,ssl,re,sqlite3
 from datetime import datetime,timedelta,timezone,date,time as dtime
 from email.message import EmailMessage
@@ -400,6 +188,61 @@ templates=Jinja2Templates(
 )
 
 init_db()
+
+
+def _normalize_login_email(value):
+    """Normalize login/signup emails without changing passwords."""
+    return (value or "").strip().casefold()
+
+
+def _load_producer_from_session(request):
+    """Resolve the producer from the signed Starlette session cookie."""
+    raw_id=request.session.get("producer_id")
+    try:
+        producer_id=int(raw_id)
+    except (TypeError, ValueError):
+        return None
+    if producer_id <= 0:
+        return None
+
+    c=get_db()
+    try:
+        return c.execute(
+            "SELECT * FROM producers WHERE id=? LIMIT 1",
+            (producer_id,)
+        ).fetchone()
+    finally:
+        c.close()
+
+
+def _require_producer(request):
+    producer=_load_producer_from_session(request)
+    if producer is None:
+        # Remove a stale/invalid producer session so it cannot repeatedly
+        # produce an authentication failure after logout or DB changes.
+        request.session.pop("producer_id", None)
+        request.session.pop("remember_me", None)
+        raise HTTPException(401, "Login required")
+    return producer
+
+
+def _verify_login_password(password, stored_hash):
+    """Verify using the project's auth implementation without mutating either value."""
+    if not password or not stored_hash:
+        return False
+    try:
+        result=auth.verify_password(password, stored_hash)
+        return bool(result)
+    except Exception:
+        # Never turn an authentication error into a successful login.
+        return False
+
+
+# Keep the rest of the application on one canonical producer-session path.
+# This is deliberately strict: no producer is accepted without a valid DB row
+# referenced by the signed session cookie.
+auth.current_producer=_load_producer_from_session
+auth.require_producer=_require_producer
 
 
 def render(n,r,**k):
@@ -665,7 +508,7 @@ def signup_page(r:Request):
 
 @app.post('/signup')
 def signup(r:Request,name:str=Form(...),email:str=Form(...),password:str=Form(...),confirm_password:str|None=Form(None),accept_terms:str|None=Form(None)):
-    name=name.strip(); email=email.strip().lower()
+    name=name.strip(); email=_normalize_login_email(email)
     if not name: return render_no_store('signup.html',r,error='Your producer or stage name is required.')
     if '@' not in email or len(email)>254: return render_no_store('signup.html',r,error='Enter a valid email address.')
     if len(password)<8: return render_no_store('signup.html',r,error='Password must be at least 8 characters.')
@@ -678,7 +521,8 @@ def signup(r:Request,name:str=Form(...),email:str=Form(...),password:str=Form(..
     except Exception:
         c.rollback(); raise
     finally: c.close()
-    r.session.clear(); r.session['producer_id']=pid
+    r.session.clear()
+    r.session['producer_id']=int(pid)
     response=RedirectResponse('/admin',303)
     response.set_cookie(key='beathub_last_email',value=email,max_age=60*60*24*365,httponly=False,samesite='lax',secure=os.getenv('SESSION_HTTPS_ONLY','false').lower()=='true',path='/')
     return response
@@ -690,13 +534,15 @@ def login_page(r:Request):
 
 @app.post('/login')
 def login(r:Request,email:str=Form(...),password:str=Form(...),remember_me:str|None=Form(None)):
-    email=email.strip().lower()
+    email=_normalize_login_email(email)
     if not email or not password: return render_no_store('login.html',r,error='Enter your email and password.',saved_email=email)
     c=get_db()
     try: p=c.execute('SELECT * FROM producers WHERE lower(trim(email))=? LIMIT 1',(email,)).fetchone()
     finally: c.close()
-    if not p or not auth.verify_password(password,(p['password_hash'] or '').strip()): return render_no_store('login.html',r,error='Incorrect email or password.',saved_email=email)
-    r.session.clear(); r.session['producer_id']=int(p['id']); r.session['remember_me']=(remember_me=='true')
+    if not p or not _verify_login_password(password,p['password_hash']): return render_no_store('login.html',r,error='Incorrect email or password.',saved_email=email)
+    r.session.clear()
+    r.session['producer_id']=int(p['id'])
+    r.session['remember_me']=(remember_me=='true')
     response=RedirectResponse('/admin',303)
     response.set_cookie(key='beathub_last_email',value=email,max_age=60*60*24*365,httponly=False,samesite='lax',secure=os.getenv('SESSION_HTTPS_ONLY','false').lower()=='true',path='/')
     return response
@@ -726,7 +572,7 @@ def forgot(
     r:Request,
     email:str=Form(...)
 ):
-    email=email.strip().lower()
+    email=_normalize_login_email(email)
 
     msg=(
         'If an account exists for that email, '
