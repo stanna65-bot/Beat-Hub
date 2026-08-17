@@ -1,8 +1,349 @@
+Pasted text.txt
+Document
+confirm this main py for me if the mpesa is functinal or what do i need, then on the dashboard where it says upload beat you can chang to upload beat/ track
+Today 8:42 PM
+Pasted text(1).txt
+Document
+
+Yes — this log tells us something useful.
+
+Your public store is working:
+
+GET /p/da-veevo → 200 OK
+GET /p/da-veevo/beat/1 → 200 OK
+GET ...mp3 → 200 OK
+
+So the beat page and audio are loading correctly.
+
+The problem is specifically here:
+
+POST /checkout/1 → 502 Bad Gateway
+
+That means the failure is happening when the checkout tries to initiate M-Pesa, not when loading the beat.
+
+Given the mpesa.py you showed me earlier, this is expected if we changed it to live mode but the required Daraja configuration isn't complete.
+
+What I need to check next
+
+I need the current main.py and mpesa.py that are actually deployed on Render.
+
+Especially these parts:
+
+@app.post("/checkout/{beat_id}")
+
+and:
+
+mpesa.stk_push(...)
+
+and the current M-Pesa environment variables/configuration.
+
+Don't send me your actual Consumer Secret, Passkey, or other private credentials.
+
+If you upload the current main.py and mpesa.py, I'll trace:
+
+Checkout
+   ↓
+/checkout/1
+   ↓
+mpesa.stk_push()
+   ↓
+Safaricom
+   ↓
+response
+
+and identify exactly why you're getting the 502.
+
+One thing I would not do yet is switch back to mock mode just to make the button work. Since you want real M-Pesa, let's fix the live integration properly.
+
+Pasted text(2).txt
+Document
+Pasted text (2).txt
+Document
+
+I checked the files you uploaded, and we now have a much clearer picture of the 502 checkout problem.
+
+🚨 I found two issues
+1. Your mpesa.py has a typo
+
+The uploaded file currently begins with:
+
+import os
+import uuid
+import base64a
+import hashlib
+from datetime import datetime
+
+It says base64a, but it must be:
+
+import base64
+
+The uploaded file confirms this typo.
+
+Change:
+
+import base64a
+
+to:
+
+import base64
+
+Otherwise the M-Pesa module cannot correctly use base64.b64encode() later in the file.
+
+2. Your checkout 502 is coming directly from mpesa.stk_push()
+
+Your checkout route does this:
+
+res = mpesa.stk_push(
+    phone,
+    b["price"],
+    f"BEAT{beat_id}",
+    b["title"]
+)
+
+and any M-Pesa exception is deliberately converted into HTTP 502.
+
+So the 502 Bad Gateway you're seeing is essentially:
+
+Your application tried to contact M-Pesa and the M-Pesa function failed.
+
+There is another major issue
+
+Your M-Pesa module requires these environment variables when running live:
+
+MPESA_CONSUMER_KEY
+MPESA_CONSUMER_SECRET
+MPESA_SHORTCODE
+MPESA_PASSKEY
+MPESA_STK_CALLBACK_URL
+
+The code explicitly checks for them and raises an error if any are missing.
+
+So on Render, you need to make sure those are actually configured.
+
+Render environment should contain
+MPESA_MODE=live
+MPESA_ENVIRONMENT=production
+
+
+MPESA_CONSUMER_KEY=YOUR_KEY
+MPESA_CONSUMER_SECRET=YOUR_SECRET
+MPESA_SHORTCODE=YOUR_SHORTCODE
+MPESA_PASSKEY=YOUR_PASSKEY
+
+
+MPESA_STK_CALLBACK_URL=https://YOUR-DOMAIN/mpesa/callback
+
+Do not send me the actual secret values.
+
+⚠️ But we are NOT finished yet
+
+I also found that your main.py callback is still a placeholder.
+
+Your current callback essentially does:
+
+return {
+    "ResultCode": 0,
+    "ResultDesc":
+        "Live Safaricom callback integration pending."
+}
+
+It does not process the Safaricom payment result.
+
+That means even if we fix the 502 and the customer successfully pays, BeatHub currently doesn't automatically call complete_beat() from the real Safaricom callback.
+
+Your complete_beat() function itself is already there and handles the order completion, producer/platform split, download token, and exclusive-beat handling.
+
+So the proper flow needs to become:
+
+Customer clicks Buy
+       ↓
+/checkout/1
+       ↓
+BeatHub creates pending order
+       ↓
+Daraja STK Push
+       ↓
+Customer receives M-Pesa prompt
+       ↓
+Customer enters M-Pesa PIN
+       ↓
+Safaricom sends callback
+       ↓
+/mpesa/callback
+       ↓
+Check ResultCode
+       ↓
+Payment successful?
+       ↓
+complete_beat(order_id)
+       ↓
+Order = completed
+       ↓
+Producer gets earnings
+       ↓
+Customer gets download
+
+Right now, the last part is missing.
+
+One more thing I noticed
+
+The main.py you uploaded is already expecting the new M-Pesa module:
+
+mpesa.stk_push(...)
+
+and:
+
+mpesa.b2c_payout(...)
+
+So we do not need to redesign your checkout system. The existing architecture is good. We need to fix the integration rather than downgrade anything.
+
+What I recommend we do now
+
+Don't test another real payment yet.
+
+I would make one proper updated mpesa.py + one proper updated section of main.py that:
+
+fixes base64a → base64
+performs live STK Push
+stores the CheckoutRequestID
+processes the real Safaricom callback
+identifies the correct pending order
+calls complete_beat()
+prevents duplicate callbacks from paying the producer twice
+handles failed/cancelled M-Pesa payments
+keeps your B2C producer withdrawals
+keeps everything else in your existing BeatHub system unchanged.
+
+Your 502 is fixable. The public store and audio are already working; the problem is specifically the M-Pesa layer.
+
+sharre full updated main py, no downgrades, just check twice to make sure theres no compatibility issues,as i reach sandbox to update the required values, the system should be fully working
+
+Yes. I went through the entire current main.py you uploaded, not just the checkout section, and patched it without removing your existing functionality.
+
+Full updated main.py
+
+Download the full updated main.py
+
+I also ran a Python syntax compilation check on the completed file, and it passes with no syntax errors.
+
+What I changed
+
+The existing system remains intact:
+
+Producer login/signup
+Producer dashboard
+Beat/track uploads
+Public producer stores
+Beat pages/audio
+Exclusive/non-exclusive licensing
+Orders
+Producer wallets
+Platform commission
+Withdrawals
+Session services
+Session bookings
+Booking messages/proposals
+Downloads
+Password reset
+Admin compatibility routes
+
+The major change is the real M-Pesa callback processing.
+
+Your checkout already creates a pending order, calls mpesa.stk_push(), and stores the CheckoutRequestID.
+
+The updated callback now:
+
+STK Push
+   ↓
+Customer pays in Sandbox
+   ↓
+Safaricom → /mpesa/callback
+   ↓
+Find CheckoutRequestID
+   ↓
+Find BeatHub order/booking
+   ↓
+ResultCode == 0?
+   ↓
+YES → complete_beat()
+   ↓
+Producer wallet credited
+Platform fee credited
+Download token generated
+
+For session bookings it similarly calls complete_session().
+
+I also made the callback idempotent, so repeated Safaricom callbacks won't create another producer/platform credit. That's compatible with your existing ledger protection in split().
+
+⚠️ One thing you MUST fix in mpesa.py
+
+Your uploaded M-Pesa file contains:
+
+import base64a
+
+That is a typo. It must be:
+
+import base64
+
+The uploaded file currently has the typo.
+
+Otherwise the live/sandbox M-Pesa module will fail.
+
+Sandbox Render variables
+
+Once mpesa.py is corrected, set:
+
+MPESA_MODE=live
+MPESA_ENVIRONMENT=sandbox
+
+
+MPESA_CONSUMER_KEY=YOUR_SANDBOX_KEY
+MPESA_CONSUMER_SECRET=YOUR_SANDBOX_SECRET
+MPESA_SHORTCODE=YOUR_SANDBOX_SHORTCODE
+MPESA_PASSKEY=YOUR_SANDBOX_PASSKEY
+
+
+MPESA_STK_CALLBACK_URL=https://YOUR-RENDER-DOMAIN/mpesa/callback
+
+And make sure requests is in requirements.txt.
+
+Do not send me your actual Consumer Secret or Passkey.
+
+One important compatibility point
+
+Your existing checkout deliberately turns an M-Pesa exception into the 502 you saw:
+
+POST /checkout/1 → 502
+
+That behavior is in your current code.
+
+With the corrected mpesa.py + sandbox credentials, that 502 should disappear provided Daraja accepts the request.
+
+I would not go live yet. First test in Safaricom Sandbox:
+
+Open a beat.
+Enter the sandbox test number.
+Click Buy.
+Confirm STK request is accepted.
+Check Render logs for /mpesa/callback.
+Confirm order changes from pending → completed.
+Confirm producer balance increases.
+Confirm download token/download works.
+
+One more thing: because your current mpesa.py has the base64a typo, the system is not yet fully ready until that is corrected too. The main.py above is ready for that corrected module.
+
+main.py
+Code
+
+Library
+/
+main.py
 import os
 import secrets
 import threading
 import time
 import uuid
+import logging
 import smtplib
 import ssl
 import re
@@ -3377,14 +3718,240 @@ def download(
 # M-PESA CALLBACK
 # ---------------------------------------------------------
 
+logger = logging.getLogger("beathub.mpesa")
+
+
+def _stk_callback_metadata(callback):
+    """Return Safaricom STK callback metadata as a simple dict."""
+    items = (
+        callback.get("CallbackMetadata", {})
+        .get("Item", [])
+    )
+
+    data = {}
+
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+
+        name = item.get("Name")
+
+        if not name:
+            continue
+
+        data[name] = item.get("Value")
+
+    return data
+
+
 @app.post(
     "/mpesa/callback"
 )
 async def callback(
     r: Request
 ):
-    return {
-        "ResultCode": 0,
-        "ResultDesc":
-            "Live Safaricom callback integration pending."
-    }
+    """
+    Receive Safaricom Daraja STK Push results.
+
+    A successful callback completes either a beat order or a
+    session booking. Failed/cancelled callbacks release the
+    pending transaction without crediting any wallet.
+
+    The operation is idempotent: once a transaction is completed
+    or failed, a duplicate callback will not credit it again.
+    """
+
+    try:
+        payload = await r.json()
+    except Exception:
+        logger.exception("Invalid M-Pesa callback JSON")
+        return {
+            "ResultCode": 1,
+            "ResultDesc": "Invalid callback payload."
+        }
+
+    try:
+        stk = (
+            payload
+            .get("Body", {})
+            .get("stkCallback", {})
+        )
+
+        checkout_request_id = stk.get(
+            "CheckoutRequestID"
+        )
+
+        result_code = stk.get(
+            "ResultCode"
+        )
+
+        result_desc = str(
+            stk.get(
+                "ResultDesc",
+                "M-Pesa transaction result."
+            )
+        )
+
+        if not checkout_request_id:
+            logger.error(
+                "M-Pesa callback missing CheckoutRequestID: %r",
+                payload
+            )
+            return {
+                "ResultCode": 1,
+                "ResultDesc":
+                    "Missing CheckoutRequestID."
+            }
+
+        metadata = _stk_callback_metadata(stk)
+
+        # Safaricom uses numeric ResultCode 0 for success.
+        try:
+            success = int(result_code) == 0
+        except (TypeError, ValueError):
+            success = False
+
+        c = get_db()
+
+        try:
+            # -------------------------------------------------
+            # FIRST: LOOK FOR A BEAT ORDER
+            # -------------------------------------------------
+
+            order = c.execute(
+                """
+                SELECT id, status
+                FROM orders
+                WHERE checkout_request_id=?
+                LIMIT 1
+                """,
+                (
+                    checkout_request_id,
+                )
+            ).fetchone()
+
+            if order:
+                if success:
+                    receipt = metadata.get(
+                        "MpesaReceiptNumber"
+                    )
+
+                    c.execute(
+                        """
+                        UPDATE orders
+                        SET mpesa_receipt=?
+                        WHERE id=?
+                          AND status='pending'
+                        """,
+                        (
+                            str(receipt)
+                            if receipt is not None
+                            else None,
+                            order["id"]
+                        )
+                    )
+
+                    c.commit()
+
+                    # complete_beat() performs its own
+                    # BEGIN IMMEDIATE transaction and has
+                    # duplicate protection through the order
+                    # status and platform ledger.
+                    complete_beat(
+                        order["id"]
+                    )
+
+                else:
+                    c.execute(
+                        """
+                        UPDATE orders
+                        SET
+                            status='failed',
+                            failure_reason=?
+                        WHERE id=?
+                          AND status='pending'
+                        """,
+                        (
+                            result_desc[:500],
+                            order["id"]
+                        )
+                    )
+
+                    c.commit()
+
+                return {
+                    "ResultCode": 0,
+                    "ResultDesc": "Accepted"
+                }
+
+            # -------------------------------------------------
+            # SECOND: LOOK FOR A SESSION BOOKING
+            # -------------------------------------------------
+
+            booking = c.execute(
+                """
+                SELECT id, status
+                FROM session_bookings
+                WHERE checkout_request_id=?
+                LIMIT 1
+                """,
+                (
+                    checkout_request_id,
+                )
+            ).fetchone()
+
+            if booking:
+                if success:
+                    complete_session(
+                        booking["id"]
+                    )
+                else:
+                    c.execute(
+                        """
+                        UPDATE session_bookings
+                        SET
+                            status='cancelled',
+                            cancelled_at=CURRENT_TIMESTAMP
+                        WHERE id=?
+                          AND status='pending'
+                        """,
+                        (
+                            booking["id"],
+                        )
+                    )
+
+                    c.commit()
+
+                return {
+                    "ResultCode": 0,
+                    "ResultDesc": "Accepted"
+                }
+
+            logger.warning(
+                "M-Pesa callback did not match an order or booking: %s",
+                checkout_request_id
+            )
+
+            # Return success to Safaricom so the callback is not
+            # repeatedly delivered for an unknown/old transaction.
+            return {
+                "ResultCode": 0,
+                "ResultDesc": "Accepted"
+            }
+
+        finally:
+            c.close()
+
+    except Exception:
+        logger.exception(
+            "M-Pesa callback processing failed"
+        )
+
+        # Safaricom has already delivered the callback. The
+        # application logs the failure so it can be corrected
+        # without exposing internal details to the API client.
+        return {
+            "ResultCode": 1,
+            "ResultDesc":
+                "Callback processing failed."
+        }
