@@ -8,53 +8,6 @@ Pasted text(2).txt
 Document
 Pasted text (2).txt
 Document
-
-Yes — this error is not an M-Pesa error. It means the main.py file on Render has accidentally had my explanatory text pasted into it.
-
-The key line is:
-
-File "/opt/render/project/src/main.py", line 8
-    Yes — this log tells us something useful.
-        ^
-SyntaxError: invalid character '—'
-
-That sentence is not Python code.
-
-What happened
-
-Somewhere near line 8 of your main.py, you have text like:
-
-Yes — this log tells us something useful.
-
-It must be removed.
-
-Also, because the next lines show:
-
-INFO: Started server process
-INFO: Application startup complete.
-
-you may be seeing output from another restart/attempt, but the deployment containing that bad main.py is not clean.
-
-Don't manually delete random lines
-
-Because we've already been modifying your main.py, I recommend we do this properly rather than fixing one line and discovering more copied explanation text afterward.
-
-Upload the current main.py that you're about to deploy, and I'll clean it completely and return a full replacement .py with:
-
-the M-Pesa checkout
-Sandbox configuration
-/mpesa/callback
-payment completion
-producer earnings
-withdrawals
-all your existing BeatHub routes
-no explanatory prose inside the Python file
-syntax checked before you deploy
-
-Do not paste any M-Pesa secrets into the file or upload them. Keep those in Render Environment Variables.
-
-Also, your earlier SUPER_ADMIN_PASSWORD was exposed in the conversation, so change that Render password before going live.
-
 Pasted text(3).txt
 Document
 
@@ -4168,6 +4121,113 @@ Then we'll verify:
 pending → completed → producer balance → download
 
 before touching production credentials.
+
+main_updated.py
+Code
+
+Search
+Search logs
+
+
+Last hour
+
+
+
+    ~~~^
+        app,
+        ^^^^
+    ...<45 lines>...
+        h11_max_incomplete_event_size=h11_max_incomplete_event_size,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/opt/render/project/src/.venv/lib/python3.14/site-packages/uvicorn/main.py", line 577, in run
+    server.run()
+    ~~~~~~~~~~^^
+  File "/opt/render/project/src/.venv/lib/python3.14/site-packages/uvicorn/server.py", line 65, in run
+    return asyncio.run(self.serve(sockets=sockets))
+           ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/render/project/python/Python-3.14.3/lib/python3.14/asyncio/runners.py", line 204, in run
+    return runner.run(main)
+           ~~~~~~~~~~^^^^^^
+  File "/opt/render/project/python/Python-3.14.3/lib/python3.14/asyncio/runners.py", line 127, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "uvloop/loop.pyx", line 1518, in uvloop.loop.Loop.run_until_complete
+  File "/opt/render/project/src/.venv/lib/python3.14/site-packages/uvicorn/server.py", line 69, in serve
+    await self._serve(sockets)
+  File "/opt/render/project/src/.venv/lib/python3.14/site-packages/uvicorn/server.py", line 76, in _serve
+    config.load()
+    ~~~~~~~~~~~^^
+  File "/opt/render/project/src/.venv/lib/python3.14/site-packages/uvicorn/config.py", line 434, in load
+    self.loaded_app = import_from_string(self.app)
+                      ~~~~~~~~~~~~~~~~~~^^^^^^^^^^
+  File "/opt/render/project/src/.venv/lib/python3.14/site-packages/uvicorn/importer.py", line 19, in import_from_string
+    module = importlib.import_module(module_str)
+  File "/opt/render/project/python/Python-3.14.3/lib/python3.14/importlib/__init__.py", line 88, in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<frozen importlib._bootstrap>", line 1398, in _gcd_import
+  File "<frozen importlib._bootstrap>", line 1371, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1342, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 938, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 755, in exec_module
+  File "<frozen importlib._bootstrap_external>", line 893, in get_code
+  File "<frozen importlib._bootstrap_external>", line 823, in source_to_code
+  File "<frozen importlib._bootstrap>", line 491, in _call_with_frames_removed
+  File "/opt/render/project/src/main.py", line 12
+    Yes — this error is not an M-Pesa error. It means the main.py file on Render has accidentally had my explanatory text pasted into it.
+        ^
+SyntaxError: invalid character '—' (U+2014)
+==> Exited with status 1
+==> Common ways to troubleshoot your deploy: https://render.com/docs/troubleshooting-deploys
+==> Running 'uvicorn main:app --host 0.0.0.0 --port $PORT'
+INFO:     102.0.17.154:0 - "GET / HTTP/1.1" 200 OK
+
+Yes — this log makes the problem very clear.
+
+This is not an M-Pesa problem yet. Render is still failing before the application starts because the main.py currently on Render contains explanatory ChatGPT text around line 12:
+
+Yes — this error is not an M-Pesa error...
+
+Python is trying to interpret that sentence as code, hence:
+
+SyntaxError: invalid character '—'
+Do this now
+
+Do not manually copy the conversation text into main.py.
+
+Replace the entire contents of your Render main.py with the actual Python file I prepared:
+
+Download the clean main_updated.py
+
+I have checked this file with Python's syntax compiler and it passes with no syntax errors.
+
+On Render
+Open your GitHub repository.
+Open main.py.
+Delete everything currently inside it.
+Upload/paste the contents of the downloaded main_updated.py.
+Commit the change to your main branch.
+Let Render deploy automatically.
+
+After deployment, the log should reach something like:
+
+INFO: Started server process
+INFO: Waiting for application startup.
+INFO: Application startup complete.
+INFO: Uvicorn running on http://0.0.0.0:...
+
+Instead of:
+
+SyntaxError: invalid character '—'
+Important
+
+The main_updated.py file itself is clean. I checked the beginning and compiled the whole file successfully. So don't modify it further right now.
+
+Once Render successfully starts, then we'll test the M-Pesa Sandbox checkout. Your checkout already creates the pending order and stores the Safaricom CheckoutRequestID; the callback can then use that ID to complete the transaction.
+
+So the immediate next step is simply: replace Render/GitHub main.py with the clean file above and redeploy.
 
 main_updated.py
 Code
