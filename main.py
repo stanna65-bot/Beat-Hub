@@ -1,122 +1,3 @@
-Yes bro. The template itself is fine; {"detail":"Login required"} means the /admin route is rejecting the request before this page can render. So this needs a backend/auth fix, not a downgrade of the dashboard.
-
-The important part is to make sure:
-
-/admin only requires a valid producer/admin session.
-Successful login actually stores the session.
-The session is preserved when redirecting to /admin.
-Invalid/expired sessions redirect cleanly to login.
-Login credentials are not left stuck in the browser fields.
-We don't weaken authentication just to make the page load.
-
-If you paste/upload the current Python file containing the /admin, login, and authentication routes, I can produce the full updated replacement Python file while keeping the existing BeatHub functionality intact.
-
-{% extends 'base.html' %}
-
-{% block body %}
-<div style="max-width:460px;margin:80px auto" class="card">
-
-    <a class="brand" href="/">BEAT <span>HUB</span></a>
-
-    <p class="muted">Super Admin Control Room</p>
-
-    {% if error %}
-    <p class="danger">{{ error }}</p>
-    {% endif %}
-
-    <form method="post" autocomplete="on">
-
-        <label>Username</label>
-        <input
-            type="text"
-            name="username"
-            autocomplete="username"
-            autocapitalize="none"
-            spellcheck="false"
-            required
-        >
-
-        <label>Password</label>
-        <input
-            type="password"
-            name="password"
-            autocomplete="current-password"
-            required
-        >
-
-        <label style="display:flex;align-items:center;gap:8px;margin:16px 0;cursor:pointer">
-            <input
-                type="checkbox"
-                name="remember_me"
-                value="true"
-                style="width:auto"
-            >
-            <span>Remember me</span>
-        </label>
-
-        <button class="btn" type="submit">
-            Secure login
-        </button>
-
-    </form>
-
-</div>
-{% endblock %}
- update and share full py
-
-Yes bro. I can update the login template and give you the full replacement .py, but I need the current Python file itself.
-
-The login HTML you just sent only controls the form. The {"detail":"Login required"} response is coming from the Python authentication/session logic, so I shouldn't invent a new backend and risk breaking your existing:
-
-Producer dashboard
-Super Admin
-Beat uploads
-M-Pesa withdrawals
-Session services
-Bookings
-Availability
-Public producer stores
-Catalogue
-Existing database/models
-
-Upload the current .py file here (the main BeatHub Python file, e.g. app.py, main.py, or whatever you're using).
-
-I'll return one complete replacement Python file, with the authentication fixed properly and without downgrading security. I'll also fix the login behavior so the username/password fields don't remain unnecessarily populated after login/logout.
-
-Pasted text(2).txt
-Document
-
-Bro, I went through the uploaded BeatHub code and fixed the authentication path rather than weakening it.
-
-The important problem was that the login flow was setting producer_id, but /admin depended on the separate auth.require_producer implementation. I made the main application use one canonical, database-backed session check for producer authentication. The uploaded code confirms /admin was protected by auth.require_producer, while login was separately writing producer_id into the session.
-
-What I changed
-Fixed producer session resolution after login.
-/admin now validates the session's producer_id against the actual producer record.
-Stale/invalid producer sessions are cleared.
-Email normalization is consistent using casefold().
-Password is never modified before verification.
-Password verification failure cannot accidentally grant access.
-Signup and login use the same session structure.
-Existing BeatHub features remain in place: beats, Hot Picks, services, availability, bookings, wallet, commission splitting, withdrawals, Super Admin, downloads and M-Pesa routes.
-I did not remove or bypass authentication.
-The file passes Python syntax compilation.
-Full replacement
-
-Download BeatHub_main_login_fixed.py
-
-Replace your current main.py with that file.
-
-One important point: this fixes the main.py authentication/session side. Your auth.py is still a separate dependency because the existing application imports it for password hashing and Super Admin functions. The uploaded source confirms that relationship.
-
-So if you still get “Incorrect email or password” after this replacement, don't create another account or change the database yet — send me your auth.py, and I'll fix the password-hash side directly without downgrading anything. 
-
-BeatHub_main_login_fixed.py
-Code
-
-Library
-/
-BeatHub_main_login_fixed.py
 import os,secrets,threading,time,uuid,smtplib,ssl,re,sqlite3
 from datetime import datetime,timedelta,timezone,date,time as dtime
 from email.message import EmailMessage
@@ -191,13 +72,11 @@ init_db()
 
 
 def _normalize_login_email(value):
-    """Normalize login/signup emails without changing passwords."""
-    return (value or "").strip().casefold()
+    return (value or '').strip().casefold()
 
 
 def _load_producer_from_session(request):
-    """Resolve the producer from the signed Starlette session cookie."""
-    raw_id=request.session.get("producer_id")
+    raw_id=request.session.get('producer_id')
     try:
         producer_id=int(raw_id)
     except (TypeError, ValueError):
@@ -208,54 +87,73 @@ def _load_producer_from_session(request):
     c=get_db()
     try:
         return c.execute(
-            "SELECT * FROM producers WHERE id=? LIMIT 1",
+            'SELECT * FROM producers WHERE id=? LIMIT 1',
             (producer_id,)
         ).fetchone()
     finally:
         c.close()
 
 
-def _require_producer(request):
+def _require_producer(request:Request):
     producer=_load_producer_from_session(request)
     if producer is None:
-        # Remove a stale/invalid producer session so it cannot repeatedly
-        # produce an authentication failure after logout or DB changes.
-        request.session.pop("producer_id", None)
-        request.session.pop("remember_me", None)
-        raise HTTPException(401, "Login required")
+        request.session.pop('producer_id', None)
+        request.session.pop('remember_me', None)
+        raise HTTPException(status_code=401, detail='Login required')
     return producer
 
 
+def _is_super_admin(request:Request):
+    return request.session.get('super_admin') is True and request.session.get('role') == 'super_admin'
+
+
+def _require_super_admin(request:Request):
+    if not _is_super_admin(request):
+        raise HTTPException(status_code=401, detail='Super Admin login required')
+    return True
+
+
 def _verify_login_password(password, stored_hash):
-    """Verify using the project's auth implementation without mutating either value."""
     if not password or not stored_hash:
         return False
     try:
-        result=auth.verify_password(password, stored_hash)
-        return bool(result)
+        return bool(auth.verify_password(password, stored_hash))
     except Exception:
-        # Never turn an authentication error into a successful login.
         return False
 
 
-# Keep the rest of the application on one canonical producer-session path.
-# This is deliberately strict: no producer is accepted without a valid DB row
-# referenced by the signed session cookie.
+# Canonicalize authentication for this application. Every producer-protected
+# route resolves the same signed session cookie against the live producers table.
 auth.current_producer=_load_producer_from_session
 auth.require_producer=_require_producer
+auth.is_super_admin=_is_super_admin
+auth.require_super_admin=_require_super_admin
 
 
 def render(n,r,**k):
     k.update(
         request=r,
-        producer=auth.current_producer(r),
-        super_admin=auth.is_super_admin(r)
+        producer=_load_producer_from_session(r),
+        super_admin=_is_super_admin(r)
     )
 
     return templates.TemplateResponse(
         n,
         k
     )
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request:Request, exc:HTTPException):
+    # Browser navigation/forms should return users to the appropriate login
+    # page rather than exposing a raw JSON 401. API endpoints keep JSON errors.
+    if exc.status_code==401 and not request.url.path.startswith('/api/'):
+        target='/super-admin/login' if request.url.path.startswith('/super-admin') else '/login'
+        response=RedirectResponse(target,303)
+        response.headers['Cache-Control']='no-store, no-cache, must-revalidate, max-age=0, private'
+        response.headers['Pragma']='no-cache'
+        return response
+    return JSONResponse({'detail':exc.detail}, status_code=exc.status_code, headers=exc.headers)
 
 
 def render_no_store(n,r,**k):
@@ -521,8 +419,7 @@ def signup(r:Request,name:str=Form(...),email:str=Form(...),password:str=Form(..
     except Exception:
         c.rollback(); raise
     finally: c.close()
-    r.session.clear()
-    r.session['producer_id']=int(pid)
+    r.session.clear(); r.session['producer_id']=pid
     response=RedirectResponse('/admin',303)
     response.set_cookie(key='beathub_last_email',value=email,max_age=60*60*24*365,httponly=False,samesite='lax',secure=os.getenv('SESSION_HTTPS_ONLY','false').lower()=='true',path='/')
     return response
@@ -540,9 +437,7 @@ def login(r:Request,email:str=Form(...),password:str=Form(...),remember_me:str|N
     try: p=c.execute('SELECT * FROM producers WHERE lower(trim(email))=? LIMIT 1',(email,)).fetchone()
     finally: c.close()
     if not p or not _verify_login_password(password,p['password_hash']): return render_no_store('login.html',r,error='Incorrect email or password.',saved_email=email)
-    r.session.clear()
-    r.session['producer_id']=int(p['id'])
-    r.session['remember_me']=(remember_me=='true')
+    r.session.clear(); r.session['producer_id']=int(p['id']); r.session['remember_me']=(remember_me=='true')
     response=RedirectResponse('/admin',303)
     response.set_cookie(key='beathub_last_email',value=email,max_age=60*60*24*365,httponly=False,samesite='lax',secure=os.getenv('SESSION_HTTPS_ONLY','false').lower()=='true',path='/')
     return response
@@ -930,6 +825,33 @@ def admin(
             (producer['id'],)
         ).fetchall()
 
+        orders=c.execute(
+            '''
+            SELECT
+                o.*,
+                b.title beat_title
+            FROM orders o
+            JOIN beats b
+                ON b.id=o.beat_id
+            WHERE b.producer_id=?
+            ORDER BY o.created_at DESC
+            LIMIT 50
+            ''',
+            (producer['id'],)
+        ).fetchall()
+
+        total_sales=c.execute(
+            '''
+            SELECT COUNT(*) AS count
+            FROM orders o
+            JOIN beats b
+                ON b.id=o.beat_id
+            WHERE b.producer_id=?
+            AND o.status='completed'
+            ''',
+            (producer['id'],)
+        ).fetchone()['count']
+
         withdrawals=c.execute(
             '''
             SELECT *
@@ -953,13 +875,16 @@ def admin(
         availability=avail,
         bookings=bookings,
         withdrawals=withdrawals,
+        orders=orders,
         totals={
             'available_balance':
                 w['available_balance'],
             'total_earnings':
                 w['total_earnings'],
             'total_withdrawn':
-                w['total_withdrawn']
+                w['total_withdrawn'],
+            'total_sales':
+                total_sales
         }
     )
 
@@ -1559,6 +1484,17 @@ def split(
     )
 
     if not res.rowcount:
+        existing=c.execute(
+            '''
+            SELECT platform_fee, producer_credit
+            FROM platform_ledger
+            WHERE source_type=? AND source_id=?
+            LIMIT 1
+            ''',
+            (kind, id)
+        ).fetchone()
+        if existing:
+            return existing['platform_fee'], existing['producer_credit']
         return None
 
     ensure_wallet(
@@ -2685,7 +2621,7 @@ def admin_phone():
 def super_login_page(
     r:Request
 ):
-    if auth.is_super_admin(r):
+    if _is_super_admin(r):
         return RedirectResponse(
             '/super-admin',
             303
@@ -2784,9 +2720,7 @@ def super_logout(
 def super_admin(
     r:Request
 ):
-    auth.require_super_admin(
-        r
-    )
+    _require_super_admin(r)
 
     c=get_db()
 
@@ -3007,9 +2941,7 @@ def super_withdraw(
     r:Request,
     amount:int=Form(...)
 ):
-    auth.require_super_admin(
-        r
-    )
+    _require_super_admin(r)
 
     if amount<10:
         raise HTTPException(
