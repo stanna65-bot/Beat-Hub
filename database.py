@@ -2,9 +2,18 @@ import sqlite3
 import re
 from pathlib import Path
 
+
+# =========================================================
+# DATABASE LOCATION
+# =========================================================
+
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / "beat_hub.db"
 
+
+# =========================================================
+# CONNECTION
+# =========================================================
 
 def get_db():
     conn = sqlite3.connect(
@@ -12,23 +21,42 @@ def get_db():
         timeout=30,
         isolation_level=None
     )
+
     conn.row_factory = sqlite3.Row
+
     conn.execute("PRAGMA foreign_keys=ON")
     conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=30000")
+
     return conn
 
 
+# =========================================================
+# SCHEMA HELPERS
+# =========================================================
+
 def _table_exists(conn, table):
-    return conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
-        (table,)
-    ).fetchone() is not None
+    return (
+        conn.execute(
+            """
+            SELECT 1
+            FROM sqlite_master
+            WHERE type='table'
+            AND name=?
+            """,
+            (table,)
+        ).fetchone()
+        is not None
+    )
 
 
 def _columns(conn, table):
+    if not _table_exists(conn, table):
+        return set()
+
     return {
-        r["name"]
-        for r in conn.execute(
+        row["name"]
+        for row in conn.execute(
             f"PRAGMA table_info({table})"
         )
     }
@@ -40,9 +68,16 @@ def _add_column(conn, table, column, definition):
 
     if column not in _columns(conn, table):
         conn.execute(
-            f"ALTER TABLE {table} ADD COLUMN {column} {definition}"
+            f"""
+            ALTER TABLE {table}
+            ADD COLUMN {column} {definition}
+            """
         )
 
+
+# =========================================================
+# SLUGS
+# =========================================================
 
 def slugify(value):
     value = re.sub(
@@ -57,389 +92,664 @@ def slugify(value):
 def unique_slug(conn, name):
     base = slugify(name)
     slug = base
-    n = 2
+    number = 2
 
     while conn.execute(
-        "SELECT 1 FROM producers WHERE slug=?",
+        """
+        SELECT 1
+        FROM producers
+        WHERE slug=?
+        LIMIT 1
+        """,
         (slug,)
     ).fetchone():
-        slug = f"{base}-{n}"
-        n += 1
+
+        slug = f"{base}-{number}"
+        number += 1
 
     return slug
 
 
+# =========================================================
+# PLATFORM LEDGER MIGRATION
+# =========================================================
+
+def _create_platform_ledger(conn):
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS platform_ledger (
+
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+            source_type TEXT NOT NULL,
+
+            source_id INTEGER NOT NULL,
+
+            gross_amount INTEGER NOT NULL,
+
+            platform_fee INTEGER NOT NULL,
+
+            producer_credit INTEGER NOT NULL,
+
+            created_at TEXT NOT NULL
+                DEFAULT CURRENT_TIMESTAMP,
+
+            UNIQUE(
+                source_type,
+                source_id
+            )
+        )
+        """
+    )
+
+
 def _migrate_platform_ledger(conn):
     """
-    Upgrade the original order-only ledger to the beat/session ledger.
+    Safely migrate older BeatHub platform ledger schemas.
 
-    Existing ledger rows are retained as beat transactions.
-    No balances are recalculated here.
+    Current application expects:
+
+        source_type
+        source_id
+        gross_amount
+        platform_fee
+        producer_credit
+        created_at
+
+    Older BeatHub versions may have used:
+
+        order_id
+        gross_amount
+        platform_fee
+        producer_credit
+        created_at
+
+    Existing legacy transactions are preserved as
+    source_type='beat'.
     """
 
-    if not _table_exists(conn, "platform_ledger"):
-        conn.execute("""
-            CREATE TABLE platform_ledger (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                source_type TEXT NOT NULL,
-                source_id INTEGER NOT NULL,
-                gross_amount INTEGER NOT NULL,
-                platform_fee INTEGER NOT NULL,
-                producer_credit INTEGER NOT NULL,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(source_type, source_id)
-            )
-        """)
+    if not _table_exists(
+        conn,
+        "platform_ledger"
+    ):
+        _create_platform_ledger(conn)
         return
 
-    cols = _columns(conn, "platform_ledger")
+    columns = _columns(
+        conn,
+        "platform_ledger"
+    )
 
-    if "source_type" in cols and "source_id" in cols:
+    # Already current.
+    if (
+        "source_type" in columns
+        and "source_id" in columns
+        and "gross_amount" in columns
+        and "platform_fee" in columns
+        and "producer_credit" in columns
+    ):
+        _add_column(
+            conn,
+            "platform_ledger",
+            "created_at",
+            "TEXT"
+        )
+
         return
+
+    # Preserve old table.
+    legacy_name = "platform_ledger_legacy"
+
+    if _table_exists(
+        conn,
+        legacy_name
+    ):
+        conn.execute(
+            f"DROP TABLE {legacy_name}"
+        )
 
     conn.execute(
-        "ALTER TABLE platform_ledger RENAME TO platform_ledger_legacy"
+        """
+        ALTER TABLE platform_ledger
+        RENAME TO platform_ledger_legacy
+        """
     )
 
-    conn.execute("""
-        CREATE TABLE platform_ledger (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            source_type TEXT NOT NULL,
-            source_id INTEGER NOT NULL,
-            gross_amount INTEGER NOT NULL,
-            platform_fee INTEGER NOT NULL,
-            producer_credit INTEGER NOT NULL,
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(source_type, source_id)
-        )
-    """)
+    _create_platform_ledger(conn)
 
-    legacy_cols = _columns(
+    legacy_columns = _columns(
         conn,
-        "platform_ledger_legacy"
+        legacy_name
     )
 
-    if "order_id" in legacy_cols:
-        conn.execute("""
-            INSERT OR IGNORE INTO platform_ledger(
-                source_type,
-                source_id,
-                gross_amount,
-                platform_fee,
-                producer_credit,
-                created_at
-            )
-            SELECT
-                'beat',
-                order_id,
-                gross_amount,
-                platform_fee,
-                producer_credit,
-                created_at
-            FROM platform_ledger_legacy
-            WHERE order_id IS NOT NULL
-        """)
+    required_legacy = {
+        "order_id",
+        "gross_amount",
+        "platform_fee",
+        "producer_credit"
+    }
 
+    if required_legacy.issubset(
+        legacy_columns
+    ):
+
+        if "created_at" in legacy_columns:
+
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO platform_ledger(
+                    source_type,
+                    source_id,
+                    gross_amount,
+                    platform_fee,
+                    producer_credit,
+                    created_at
+                )
+                SELECT
+                    'beat',
+                    order_id,
+                    gross_amount,
+                    platform_fee,
+                    producer_credit,
+                    COALESCE(
+                        created_at,
+                        CURRENT_TIMESTAMP
+                    )
+                FROM platform_ledger_legacy
+                WHERE order_id IS NOT NULL
+                """
+            )
+
+        else:
+
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO platform_ledger(
+                    source_type,
+                    source_id,
+                    gross_amount,
+                    platform_fee,
+                    producer_credit
+                )
+                SELECT
+                    'beat',
+                    order_id,
+                    gross_amount,
+                    platform_fee,
+                    producer_credit
+                FROM platform_ledger_legacy
+                WHERE order_id IS NOT NULL
+                """
+            )
+
+
+# =========================================================
+# DATABASE INITIALIZATION
+# =========================================================
 
 def init_db():
+
     conn = get_db()
 
     try:
-        conn.executescript("""
-        CREATE TABLE IF NOT EXISTS producers (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            slug TEXT UNIQUE NOT NULL,
-            email TEXT UNIQUE NOT NULL,
-            password_hash TEXT NOT NULL,
-            name TEXT NOT NULL,
-            bio TEXT NOT NULL DEFAULT '',
-            phone TEXT NOT NULL DEFAULT '',
-            payout_phone TEXT NOT NULL DEFAULT '',
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-        );
 
-        CREATE TABLE IF NOT EXISTS beats (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            producer_id INTEGER NOT NULL
-                REFERENCES producers(id)
-                ON DELETE CASCADE,
+        # =================================================
+        # PRODUCERS
+        # =================================================
 
-            title TEXT NOT NULL,
-            genre TEXT NOT NULL DEFAULT '',
-            bpm INTEGER,
-            price INTEGER NOT NULL CHECK(price>0),
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS producers (
 
-            cover_path TEXT NOT NULL,
-            audio_path TEXT NOT NULL,
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
 
-            is_hot_pick INTEGER NOT NULL DEFAULT 0,
+                slug TEXT UNIQUE NOT NULL,
 
-            license_type TEXT NOT NULL
-                DEFAULT 'non_exclusive',
+                email TEXT UNIQUE NOT NULL,
 
-            status TEXT NOT NULL
-                DEFAULT 'available',
+                password_hash TEXT NOT NULL,
 
-            sold_at TEXT,
-            sold_order_id INTEGER,
+                name TEXT NOT NULL,
 
-            created_at TEXT NOT NULL
-                DEFAULT CURRENT_TIMESTAMP
-        );
+                bio TEXT NOT NULL DEFAULT '',
 
-        CREATE TABLE IF NOT EXISTS orders (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                phone TEXT NOT NULL DEFAULT '',
 
-            beat_id INTEGER NOT NULL
-                REFERENCES beats(id),
+                payout_phone TEXT NOT NULL DEFAULT '',
 
-            buyer_phone TEXT NOT NULL,
-            amount INTEGER NOT NULL,
+                created_at TEXT NOT NULL
+                    DEFAULT CURRENT_TIMESTAMP
+            );
 
-            status TEXT NOT NULL
-                DEFAULT 'pending',
 
-            checkout_request_id TEXT UNIQUE,
-            mpesa_receipt TEXT,
+            # =================================================
+            # BEATS
+            # =================================================
 
-            platform_fee INTEGER NOT NULL DEFAULT 0,
-            producer_payout INTEGER NOT NULL DEFAULT 0,
+            CREATE TABLE IF NOT EXISTS beats (
 
-            commission_rate_locked REAL,
-            split_applied_at TEXT,
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
 
-            download_token TEXT UNIQUE,
+                producer_id INTEGER NOT NULL
+                    REFERENCES producers(id)
+                    ON DELETE CASCADE,
 
-            failure_reason TEXT,
+                title TEXT NOT NULL,
 
-            created_at TEXT NOT NULL
-                DEFAULT CURRENT_TIMESTAMP,
+                genre TEXT NOT NULL DEFAULT '',
 
-            completed_at TEXT
-        );
+                bpm INTEGER,
 
-        CREATE TABLE IF NOT EXISTS producer_wallets (
-            producer_id INTEGER PRIMARY KEY
-                REFERENCES producers(id)
-                ON DELETE CASCADE,
+                price INTEGER NOT NULL
+                    CHECK(price > 0),
 
-            available_balance INTEGER NOT NULL DEFAULT 0,
-            pending_withdrawal INTEGER NOT NULL DEFAULT 0,
-            total_earnings INTEGER NOT NULL DEFAULT 0,
-            total_withdrawn INTEGER NOT NULL DEFAULT 0,
+                cover_path TEXT NOT NULL,
 
-            updated_at TEXT NOT NULL
-                DEFAULT CURRENT_TIMESTAMP
-        );
+                audio_path TEXT NOT NULL,
 
-        CREATE TABLE IF NOT EXISTS withdrawals (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                is_hot_pick INTEGER NOT NULL
+                    DEFAULT 0,
 
-            producer_id INTEGER NOT NULL
-                REFERENCES producers(id),
+                license_type TEXT NOT NULL
+                    DEFAULT 'non_exclusive',
 
-            amount INTEGER NOT NULL
-                CHECK(amount>0),
+                status TEXT NOT NULL
+                    DEFAULT 'available',
 
-            phone TEXT NOT NULL,
+                sold_at TEXT,
 
-            status TEXT NOT NULL
-                DEFAULT 'pending',
+                sold_order_id INTEGER,
 
-            payout_reference TEXT,
-            failure_reason TEXT,
+                created_at TEXT NOT NULL
+                    DEFAULT CURRENT_TIMESTAMP
+            );
 
-            requested_at TEXT NOT NULL
-                DEFAULT CURRENT_TIMESTAMP,
 
-            completed_at TEXT
-        );
+            # =================================================
+            # ORDERS
+            # =================================================
 
-        CREATE TABLE IF NOT EXISTS platform_wallet (
-            id INTEGER PRIMARY KEY
-                CHECK(id=1),
+            CREATE TABLE IF NOT EXISTS orders (
 
-            available_balance INTEGER NOT NULL DEFAULT 0,
-            pending_withdrawal INTEGER NOT NULL DEFAULT 0,
-            total_earnings INTEGER NOT NULL DEFAULT 0,
-            total_withdrawn INTEGER NOT NULL DEFAULT 0,
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
 
-            updated_at TEXT NOT NULL
-                DEFAULT CURRENT_TIMESTAMP
-        );
+                beat_id INTEGER NOT NULL
+                    REFERENCES beats(id),
 
-        INSERT OR IGNORE INTO platform_wallet(id)
-        VALUES(1);
+                buyer_phone TEXT NOT NULL,
 
-        CREATE TABLE IF NOT EXISTS platform_withdrawals (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                amount INTEGER NOT NULL,
 
-            amount INTEGER NOT NULL
-                CHECK(amount>0),
+                status TEXT NOT NULL
+                    DEFAULT 'pending',
 
-            phone TEXT NOT NULL,
+                checkout_request_id TEXT UNIQUE,
 
-            status TEXT NOT NULL
-                DEFAULT 'pending',
+                mpesa_receipt TEXT,
 
-            payout_reference TEXT,
-            failure_reason TEXT,
+                platform_fee INTEGER NOT NULL
+                    DEFAULT 0,
 
-            requested_at TEXT NOT NULL
-                DEFAULT CURRENT_TIMESTAMP,
+                producer_payout INTEGER NOT NULL
+                    DEFAULT 0,
 
-            completed_at TEXT
-        );
+                commission_rate_locked REAL,
 
-        CREATE TABLE IF NOT EXISTS password_reset_tokens (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                split_applied_at TEXT,
 
-            producer_id INTEGER NOT NULL
-                REFERENCES producers(id)
-                ON DELETE CASCADE,
+                download_token TEXT UNIQUE,
 
-            token_hash TEXT NOT NULL UNIQUE,
-            expires_at TEXT NOT NULL,
+                failure_reason TEXT,
 
-            used_at TEXT,
+                created_at TEXT NOT NULL
+                    DEFAULT CURRENT_TIMESTAMP,
 
-            created_at TEXT NOT NULL
-                DEFAULT CURRENT_TIMESTAMP
-        );
+                completed_at TEXT
+            );
 
-        CREATE TABLE IF NOT EXISTS admin_events (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
 
-            event_type TEXT NOT NULL,
-            reference TEXT,
-            details TEXT,
+            # =================================================
+            # PRODUCER WALLET
+            # =================================================
 
-            created_at TEXT NOT NULL
-                DEFAULT CURRENT_TIMESTAMP
-        );
+            CREATE TABLE IF NOT EXISTS producer_wallets (
 
-        CREATE TABLE IF NOT EXISTS session_services (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                producer_id INTEGER PRIMARY KEY
+                    REFERENCES producers(id)
+                    ON DELETE CASCADE,
 
-            producer_id INTEGER NOT NULL
-                REFERENCES producers(id)
-                ON DELETE CASCADE,
+                available_balance INTEGER NOT NULL
+                    DEFAULT 0,
 
-            title TEXT NOT NULL,
-            description TEXT NOT NULL DEFAULT '',
+                pending_withdrawal INTEGER NOT NULL
+                    DEFAULT 0,
 
-            duration_minutes INTEGER NOT NULL
-                CHECK(duration_minutes BETWEEN 15 AND 720),
+                total_earnings INTEGER NOT NULL
+                    DEFAULT 0,
 
-            price INTEGER NOT NULL
-                CHECK(price>0),
+                total_withdrawn INTEGER NOT NULL
+                    DEFAULT 0,
 
-            location TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL
+                    DEFAULT CURRENT_TIMESTAMP
+            );
 
-            active INTEGER NOT NULL DEFAULT 1,
 
-            created_at TEXT NOT NULL
-                DEFAULT CURRENT_TIMESTAMP
-        );
+            # =================================================
+            # PRODUCER WITHDRAWALS
+            # =================================================
 
-        CREATE TABLE IF NOT EXISTS producer_availability (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            CREATE TABLE IF NOT EXISTS withdrawals (
 
-            producer_id INTEGER NOT NULL
-                REFERENCES producers(id)
-                ON DELETE CASCADE,
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
 
-            weekday INTEGER NOT NULL
-                CHECK(weekday BETWEEN 0 AND 6),
+                producer_id INTEGER NOT NULL
+                    REFERENCES producers(id),
 
-            start_time TEXT NOT NULL,
-            end_time TEXT NOT NULL,
+                amount INTEGER NOT NULL
+                    CHECK(amount > 0),
 
-            slot_minutes INTEGER NOT NULL DEFAULT 60
-                CHECK(slot_minutes BETWEEN 15 AND 240),
+                phone TEXT NOT NULL,
 
-            UNIQUE(producer_id, weekday)
-        );
+                status TEXT NOT NULL
+                    DEFAULT 'pending',
 
-        CREATE TABLE IF NOT EXISTS session_bookings (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                payout_reference TEXT,
 
-            producer_id INTEGER NOT NULL
-                REFERENCES producers(id)
-                ON DELETE CASCADE,
+                failure_reason TEXT,
 
-            service_id INTEGER NOT NULL
-                REFERENCES session_services(id),
+                requested_at TEXT NOT NULL
+                    DEFAULT CURRENT_TIMESTAMP,
 
-            client_name TEXT NOT NULL,
-            client_phone TEXT NOT NULL,
-            client_email TEXT NOT NULL DEFAULT '',
+                completed_at TEXT
+            );
 
-            start_at TEXT NOT NULL,
-            end_at TEXT NOT NULL,
 
-            amount INTEGER NOT NULL
-                CHECK(amount>0),
+            # =================================================
+            # PLATFORM WALLET
+            # =================================================
 
-            status TEXT NOT NULL
-                DEFAULT 'pending',
+            CREATE TABLE IF NOT EXISTS platform_wallet (
 
-            hold_expires_at TEXT,
+                id INTEGER PRIMARY KEY
+                    CHECK(id = 1),
 
-            checkout_request_id TEXT UNIQUE,
+                available_balance INTEGER NOT NULL
+                    DEFAULT 0,
 
-            paid_at TEXT,
-            cancelled_at TEXT,
+                pending_withdrawal INTEGER NOT NULL
+                    DEFAULT 0,
 
-            platform_fee INTEGER NOT NULL DEFAULT 0,
-            producer_payout INTEGER NOT NULL DEFAULT 0,
+                total_earnings INTEGER NOT NULL
+                    DEFAULT 0,
 
-            split_applied_at TEXT,
+                total_withdrawn INTEGER NOT NULL
+                    DEFAULT 0,
 
-            created_at TEXT NOT NULL
-                DEFAULT CURRENT_TIMESTAMP
-        );
+                updated_at TEXT NOT NULL
+                    DEFAULT CURRENT_TIMESTAMP
+            );
 
-        CREATE TABLE IF NOT EXISTS booking_messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
 
-            booking_id INTEGER NOT NULL
-                REFERENCES session_bookings(id)
-                ON DELETE CASCADE,
+            INSERT OR IGNORE INTO platform_wallet(id)
+            VALUES(1);
 
-            sender_role TEXT NOT NULL
-                CHECK(sender_role IN ('producer','client')),
 
-            body TEXT NOT NULL,
+            # =================================================
+            # PLATFORM WITHDRAWALS
+            # =================================================
 
-            created_at TEXT NOT NULL
-                DEFAULT CURRENT_TIMESTAMP
-        );
+            CREATE TABLE IF NOT EXISTS platform_withdrawals (
 
-        CREATE TABLE IF NOT EXISTS booking_proposals (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
 
-            booking_id INTEGER NOT NULL
-                REFERENCES session_bookings(id)
-                ON DELETE CASCADE,
+                amount INTEGER NOT NULL
+                    CHECK(amount > 0),
 
-            proposed_start_at TEXT NOT NULL,
-            proposed_end_at TEXT NOT NULL,
+                phone TEXT NOT NULL,
 
-            proposed_by TEXT NOT NULL
-                CHECK(proposed_by IN ('producer','client')),
+                status TEXT NOT NULL
+                    DEFAULT 'pending',
 
-            confirmed_at TEXT,
-            declined_at TEXT,
+                payout_reference TEXT,
 
-            created_at TEXT NOT NULL
-                DEFAULT CURRENT_TIMESTAMP
-        );
-        """)
+                failure_reason TEXT,
 
-        # -------------------------------------------------
-        # SAFE MIGRATIONS FOR OLDER BEATHUB DATABASES
-        # -------------------------------------------------
+                requested_at TEXT NOT NULL
+                    DEFAULT CURRENT_TIMESTAMP,
+
+                completed_at TEXT
+            );
+
+
+            # =================================================
+            # PASSWORD RESET
+            # =================================================
+
+            CREATE TABLE IF NOT EXISTS password_reset_tokens (
+
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+                producer_id INTEGER NOT NULL
+                    REFERENCES producers(id)
+                    ON DELETE CASCADE,
+
+                token_hash TEXT NOT NULL UNIQUE,
+
+                expires_at TEXT NOT NULL,
+
+                used_at TEXT,
+
+                created_at TEXT NOT NULL
+                    DEFAULT CURRENT_TIMESTAMP
+            );
+
+
+            # =================================================
+            # ADMIN EVENTS
+            # =================================================
+
+            CREATE TABLE IF NOT EXISTS admin_events (
+
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+                event_type TEXT NOT NULL,
+
+                reference TEXT,
+
+                details TEXT,
+
+                created_at TEXT NOT NULL
+                    DEFAULT CURRENT_TIMESTAMP
+            );
+
+
+            # =================================================
+            # SESSION SERVICES
+            # =================================================
+
+            CREATE TABLE IF NOT EXISTS session_services (
+
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+                producer_id INTEGER NOT NULL
+                    REFERENCES producers(id)
+                    ON DELETE CASCADE,
+
+                title TEXT NOT NULL,
+
+                description TEXT NOT NULL
+                    DEFAULT '',
+
+                duration_minutes INTEGER NOT NULL
+                    CHECK(
+                        duration_minutes
+                        BETWEEN 15 AND 720
+                    ),
+
+                price INTEGER NOT NULL
+                    CHECK(price > 0),
+
+                location TEXT NOT NULL
+                    DEFAULT '',
+
+                active INTEGER NOT NULL
+                    DEFAULT 1,
+
+                created_at TEXT NOT NULL
+                    DEFAULT CURRENT_TIMESTAMP
+            );
+
+
+            # =================================================
+            # PRODUCER AVAILABILITY
+            # =================================================
+
+            CREATE TABLE IF NOT EXISTS producer_availability (
+
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+                producer_id INTEGER NOT NULL
+                    REFERENCES producers(id)
+                    ON DELETE CASCADE,
+
+                weekday INTEGER NOT NULL
+                    CHECK(
+                        weekday BETWEEN 0 AND 6
+                    ),
+
+                start_time TEXT NOT NULL,
+
+                end_time TEXT NOT NULL,
+
+                slot_minutes INTEGER NOT NULL
+                    DEFAULT 60
+                    CHECK(
+                        slot_minutes
+                        BETWEEN 15 AND 240
+                    ),
+
+                UNIQUE(
+                    producer_id,
+                    weekday
+                )
+            );
+
+
+            # =================================================
+            # SESSION BOOKINGS
+            # =================================================
+
+            CREATE TABLE IF NOT EXISTS session_bookings (
+
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+                producer_id INTEGER NOT NULL
+                    REFERENCES producers(id)
+                    ON DELETE CASCADE,
+
+                service_id INTEGER NOT NULL
+                    REFERENCES session_services(id),
+
+                client_name TEXT NOT NULL,
+
+                client_phone TEXT NOT NULL,
+
+                client_email TEXT NOT NULL
+                    DEFAULT '',
+
+                start_at TEXT NOT NULL,
+
+                end_at TEXT NOT NULL,
+
+                amount INTEGER NOT NULL
+                    CHECK(amount > 0),
+
+                status TEXT NOT NULL
+                    DEFAULT 'pending',
+
+                hold_expires_at TEXT,
+
+                checkout_request_id TEXT UNIQUE,
+
+                paid_at TEXT,
+
+                cancelled_at TEXT,
+
+                platform_fee INTEGER NOT NULL
+                    DEFAULT 0,
+
+                producer_payout INTEGER NOT NULL
+                    DEFAULT 0,
+
+                split_applied_at TEXT,
+
+                created_at TEXT NOT NULL
+                    DEFAULT CURRENT_TIMESTAMP
+            );
+
+
+            # =================================================
+            # BOOKING MESSAGES
+            # =================================================
+
+            CREATE TABLE IF NOT EXISTS booking_messages (
+
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+                booking_id INTEGER NOT NULL
+                    REFERENCES session_bookings(id)
+                    ON DELETE CASCADE,
+
+                sender_role TEXT NOT NULL
+                    CHECK(
+                        sender_role
+                        IN ('producer','client')
+                    ),
+
+                body TEXT NOT NULL,
+
+                created_at TEXT NOT NULL
+                    DEFAULT CURRENT_TIMESTAMP
+            );
+
+
+            # =================================================
+            # BOOKING PROPOSALS
+            # =================================================
+
+            CREATE TABLE IF NOT EXISTS booking_proposals (
+
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+                booking_id INTEGER NOT NULL
+                    REFERENCES session_bookings(id)
+                    ON DELETE CASCADE,
+
+                proposed_start_at TEXT NOT NULL,
+
+                proposed_end_at TEXT NOT NULL,
+
+                proposed_by TEXT NOT NULL
+                    CHECK(
+                        proposed_by
+                        IN ('producer','client')
+                    ),
+
+                confirmed_at TEXT,
+
+                declined_at TEXT,
+
+                created_at TEXT NOT NULL
+                    DEFAULT CURRENT_TIMESTAMP
+            );
+            """
+        )
+
+
+        # =====================================================
+        # SAFE LEGACY MIGRATIONS
+        # =====================================================
 
         _add_column(
             conn,
@@ -455,9 +765,10 @@ def init_db():
             "TEXT"
         )
 
-        # -------------------------------------------------
-        # EXCLUSIVE / NON-EXCLUSIVE BEAT MIGRATION
-        # -------------------------------------------------
+
+        # =====================================================
+        # BEAT LICENSING
+        # =====================================================
 
         _add_column(
             conn,
@@ -487,26 +798,28 @@ def init_db():
             "INTEGER"
         )
 
-        # Existing beats are preserved and remain available
-        # as non-exclusive beats unless explicitly changed
-        # by a future producer action.
-        conn.execute("""
+        conn.execute(
+            """
             UPDATE beats
             SET license_type='non_exclusive'
             WHERE license_type IS NULL
-               OR license_type=''
-        """)
+            OR license_type=''
+            """
+        )
 
-        conn.execute("""
+        conn.execute(
+            """
             UPDATE beats
             SET status='available'
             WHERE status IS NULL
-               OR status=''
-        """)
+            OR status=''
+            """
+        )
 
-        # -------------------------------------------------
+
+        # =====================================================
         # SESSION MIGRATIONS
-        # -------------------------------------------------
+        # =====================================================
 
         _add_column(
             conn,
@@ -585,83 +898,148 @@ def init_db():
             "TEXT"
         )
 
-        # -------------------------------------------------
+
+        # =====================================================
         # PLATFORM LEDGER
-        # -------------------------------------------------
+        # =====================================================
 
         _migrate_platform_ledger(conn)
 
-        # -------------------------------------------------
-        # INDEXES
-        # -------------------------------------------------
 
-        conn.execute("""
+        # =====================================================
+        # INDEXES
+        # =====================================================
+
+        conn.execute(
+            """
             CREATE INDEX IF NOT EXISTS
             idx_beats_producer
             ON beats(producer_id)
-        """)
+            """
+        )
 
-        conn.execute("""
+        conn.execute(
+            """
             CREATE INDEX IF NOT EXISTS
             idx_beats_status
             ON beats(status)
-        """)
+            """
+        )
 
-        conn.execute("""
+        conn.execute(
+            """
             CREATE INDEX IF NOT EXISTS
             idx_beats_license_type
             ON beats(license_type)
-        """)
+            """
+        )
 
-        conn.execute("""
+        conn.execute(
+            """
             CREATE INDEX IF NOT EXISTS
             idx_beats_sold_order
             ON beats(sold_order_id)
-        """)
+            """
+        )
 
-        conn.execute("""
+        conn.execute(
+            """
             CREATE INDEX IF NOT EXISTS
             idx_services_producer
             ON session_services(producer_id)
-        """)
+            """
+        )
 
-        conn.execute("""
+        conn.execute(
+            """
             CREATE INDEX IF NOT EXISTS
             idx_bookings_producer_start
             ON session_bookings(
                 producer_id,
                 start_at
             )
-        """)
+            """
+        )
 
-        conn.execute("""
+        conn.execute(
+            """
             CREATE INDEX IF NOT EXISTS
             idx_booking_messages_booking
             ON booking_messages(
                 booking_id,
                 id
             )
-        """)
+            """
+        )
 
-        conn.execute("""
+        conn.execute(
+            """
             CREATE INDEX IF NOT EXISTS
             idx_booking_proposals_booking
             ON booking_proposals(
                 booking_id,
                 id
             )
-        """)
+            """
+        )
 
-        conn.execute("""
+        conn.execute(
+            """
             CREATE UNIQUE INDEX IF NOT EXISTS
             idx_session_checkout_request
             ON session_bookings(
                 checkout_request_id
             )
             WHERE checkout_request_id IS NOT NULL
-        """)
+            """
+        )
+
+
+        # =====================================================
+        # NORMALIZE OLD NULL CREATED_AT VALUES
+        # =====================================================
+
+        conn.execute(
+            """
+            UPDATE session_services
+            SET created_at=CURRENT_TIMESTAMP
+            WHERE created_at IS NULL
+            """
+        )
+
+        conn.execute(
+            """
+            UPDATE session_bookings
+            SET created_at=CURRENT_TIMESTAMP
+            WHERE created_at IS NULL
+            """
+        )
+
+
+        # =====================================================
+        # ENSURE PLATFORM WALLET EXISTS
+        # =====================================================
+
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO platform_wallet(
+                id
+            )
+            VALUES(1)
+            """
+        )
+
 
         conn.commit()
+
+    except Exception:
+
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
+        raise
 
     finally:
         conn.close()
