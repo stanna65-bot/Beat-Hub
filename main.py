@@ -1,354 +1,344 @@
-Pasted text(3).txt
-Document
-{"detail":"Not Found"} chat check this out and explain 
+import os
+import secrets
+import threading
+import time
+import uuid
+import smtplib
+import ssl
+import sqlite3
 
-Good — /health working means the app is running. The remaining problem is logout/session handling.
-
-Your source already has a /logout route, but we need to make the logout action match the browser request exactly.
-
-Fix it directly
-
-In main.py, replace your logout route with:
-
-@app.api_route("/logout", methods=["GET", "POST"])
-async def logout(request: Request):
-    request.session.clear()
-
-
-    response = RedirectResponse(
-        url="/login",
-        status_code=303
-    )
-
-
-    response.delete_cookie("session")
-    response.delete_cookie("remember_email")
-
-
-    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
-    response.headers["Pragma"] = "no-cache"
-    response.headers["Expires"] = "0"
-
-
-    return response
-Then check your admin template
-
-Your logout button/form should be:
-
-<form method="post" action="/logout">
-    <button type="submit">Logout</button>
-</form>
-
-Do not use:
-
-<a href="/logout">
-
-unless you keep the GET support above—which we are doing anyway.
-
-Then
-Save main.py.
-Commit.
-Push to GitHub.
-Deploy latest commit on Render.
-Login.
-Click Logout.
-
-It should take you straight to:
-
-/login
-
-and the admin session should be cleared.
-
-The existing code's intended logout behavior was already clearing the session and redirecting, so we're fixing the route to reliably handle both GET and POST rather than changing your authentication architecture.
-
-Pasted text(4).txt
-Document
-now again i want the admin page to have a button nicely placed where an artist can upload multiple tracks as once,lets say an album and cver and price dont no downgrades
-
-Yes. We can add this without removing or downgrading anything.
-
-Your current admin page already has the single-track upload section at lines 236–349, with title, genre, BPM, price, cover and audio fields.
-
-What you want is a new “Upload Album / Multiple Tracks” button/section that lets an artist:
-
-Enter Album name
-Upload one cover
-Set album price
-Select multiple audio tracks at once
-Publish the whole album in one submission
-Automatically use the uploaded track filenames as track names, while still allowing editing if we build the UI that way
-Keep the existing single Beat / Track upload completely intact
-Keep existing catalogue, payments, M-Pesa, sessions, wallets and admin functionality intact
-Important compatibility point
-
-The template alone is not enough to implement this properly. Your current form posts single-track data to:
-
-/admin/beat
-
-For a real multi-track album upload, we need to add a backend endpoint such as:
-
-POST /admin/album
-
-and make sure it works with your existing database schema, upload storage and catalogue tables.
-
-So I don't want to invent a database structure and break BeatHub.
-
-Send/upload the current main.py you are deploying now (the one where /health works). Then I'll give you the exact full replacement(s), with:
-
-UPLOAD ALBUM
-
-Album title → Cover → Price → Multiple tracks → Publish Album
-
-while preserving everything currently working.
-
-Pasted text(5).txt
-Document
-produce fll replacements of the pys and make sure they are all ok, no downgrades
-
-Done. I inspected the current BeatHub files, kept the existing functionality, added the album system additively, and tested the replacements.
-
-What is added
-Upload Album section in Admin
-Album title
-Album genre
-Album price
-One album cover
-Multiple audio tracks at once
-Up to 50 tracks
-Track names automatically taken from filenames
-Album catalogue displayed in Admin
-Public album page
-Existing single-track upload remains intact
-Existing beats, orders, wallets, sessions and other routes remain intact
-/logout now supports GET + POST and redirects to /login
-Database migration is additive — it does not delete existing data
-Files
-
-1. Full project replacement — easiest option
-
-Download BeatHub full album replacement ZIP
-
-Or individually:
-
-Download updated main.py
-
-Download updated database.py
-
-Download auth.py
-
-Download mpesa.py
-
-Download updated admin.html
-
-Download new album.html
-
-Testing completed
-PY_COMPILE_OK
-ROUTE_IMPORT_OK
-ALBUM_SCHEMA_OK
-
-Confirmed routes:
-
-/health                         GET, HEAD
-/logout                         GET, POST
-/admin/beat                     POST
-/admin/album                    POST
-/admin/album/{album_id}/publish POST
-/p/{slug}/album/{album_id}      GET
-
-The database test also confirmed the new albums and album_tracks tables work alongside the existing beats, orders, wallets, sessions and ledger tables.
-
-Use the ZIP if you want the safest replacement. It contains the complete project structure, not just the changed snippets.
-
-{% extends 'base.html' %}{% block title %}{{producer['name']}} — BeatHub{% endblock %}{% block body %}<div class="nav"><div><div class="muted" style="font:12px 'Space Mono'">PRODUCER CONTROL ROOM</div><div class="brand">{{producer['name']}}</div></div></div><div class="card" style="margin:22px 0"><div class="muted">YOUR PUBLIC STORE</div><div style="font-family:'Space Mono';color:var(--teal);margin-top:8px;word-break:break-all">{{request.url.scheme}}://{{request.url.netloc}}/p/{{producer['slug']}}</div></div><div style="display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:12px;margin:20px 0"><div class="card"><div class="muted">AVAILABLE BALANCE</div><h2>KES {{totals['available_balance']}}</h2><small class="muted">Ready for withdrawal</small></div><div class="card"><div class="muted">TOTAL EARNINGS</div><h2>KES {{totals['total_earnings']}}</h2><small class="muted">Your net earnings</small></div><div class="card"><div class="muted">WITHDRAWN</div><h2>KES {{totals['total_withdrawn']}}</h2><small class="muted">Paid to M-Pesa</small></div><div class="card"><div class="muted">PUBLIC PROFILE</div><h2>↗</h2><a class="btn alt" href="/p/{{producer['slug']}}">View store</a></div></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:18px"><section class="card"><h2>Profile & payouts</h2><form action="/admin/profile" method="post"><label>Producer name</label><input name="name" value="{{producer['name']}}" required><label>Bio</label><textarea name="bio">{{producer['bio']}}</textarea><label>Phone</label><input name="phone" value="{{producer['phone']}}"><label>M-Pesa payout number</label><input name="payout_phone" value="{{producer['payout_phone']}}" placeholder="07XXXXXXXX"><button class="btn">Save profile</button></form><hr style="margin:25px 0"><h2>Withdraw to M-Pesa</h2><form action="/admin/withdraw" method="post"><label>Amount</label><input name="amount" type="number" min="10" required placeholder="KES"><button class="btn">Request withdrawal</button></form></section><section class="card"><div style="display:flex;justify-content:
-{% extends 'base.html' %}
-{% block title %}{{album['title']}} — BeatHub{% endblock %}
-{% block body %}
-<div class="nav"><div><div class="muted" style="font:12px 'Space Mono'">ALBUM</div><div class="brand">{{album['producer_name']}}</div></div><a class="btn alt" href="/p/{{album['producer_slug']}}">Back to store</a></div>
-<section class="card" style="margin:22px 0;display:grid;grid-template-columns:minmax(220px,320px) 1fr;gap:24px;align-items:start">
-<img src="{{album['cover_path']}}" alt="{{album['title']}} cover" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:14px">
-<div><div class="muted">ALBUM</div><h1 style="margin:6px 0">{{album['title']}}</h1><p class="muted">{{album['genre']}} · {{tracks|length}} tracks · KES {{album['price']}}</p>
-<div style="margin-top:20px">{% for t in tracks %}<div style="border-top:1px solid var(--line);padding:14px 0;display:grid;grid-template-columns:40px 1fr;gap:12px;align-items:center"><b>{{t['track_number']}}</b><div><b>{{t['title']}}</b><audio controls preload="none" src="{{t['audio_path']}}" style="width:100%;margin-top:8px"></audio></div></div>{% endfor %}</div></div>
-</section>
-{% endblock %}
-BeatHub_main.py
-Code
-BeatHub_database.py
-Code
-BeatHub_auth.py
-Code
-BeatHub_mpesa.py
-Code
-BeatHub_admin.html
-HTML
-BeatHub_album.html
-HTML
-Show less
-
-Library
-/
-BeatHub_main.py
-import os,secrets,threading,time,uuid,smtplib,ssl,re,sqlite3
-from datetime import datetime,timedelta,timezone,date,time as dtime
+from datetime import datetime, timedelta, timezone, date, time as dtime
 from email.message import EmailMessage
 from pathlib import Path
 
-from fastapi import FastAPI,Request,Form,UploadFile,File,HTTPException,Depends
-from fastapi.responses import RedirectResponse,FileResponse,JSONResponse,Response
+from fastapi import (
+    FastAPI,
+    Request,
+    Form,
+    UploadFile,
+    File,
+    HTTPException,
+    Depends,
+)
+
+from fastapi.responses import (
+    RedirectResponse,
+    FileResponse,
+    Response,
+)
+
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-import auth,mpesa
-from database import get_db,init_db,unique_slug
+import auth
+import mpesa
 
-BASE=Path(__file__).resolve().parent
-STATIC=BASE/'static'
-COVERS=STATIC/'uploads/covers'
-AUDIO=STATIC/'uploads/audio'
-ALBUM_COVERS=COVERS
+from database import (
+    get_db,
+    init_db,
+    unique_slug,
+)
 
-for p in(COVERS,AUDIO):
-    p.mkdir(parents=True,exist_ok=True)
 
-FEE_RATE=max(
-    0,
-    min(
-        100,
-        int(
-            os.getenv(
-                'PLATFORM_COMMISSION_RATE',
-                '10'
-            )
+# ============================================================
+# APPLICATION PATHS
+# ============================================================
+
+BASE = Path(__file__).resolve().parent
+
+STATIC = BASE / "static"
+
+COVERS = STATIC / "uploads" / "covers"
+AUDIO = STATIC / "uploads" / "audio"
+
+ALBUM_COVERS = COVERS
+
+
+COVERS.mkdir(
+    parents=True,
+    exist_ok=True,
+)
+
+AUDIO.mkdir(
+    parents=True,
+    exist_ok=True,
+)
+
+
+# ============================================================
+# PLATFORM COMMISSION
+# ============================================================
+
+try:
+    FEE_RATE = max(
+        0,
+        min(
+            100,
+            int(
+                os.getenv(
+                    "PLATFORM_COMMISSION_RATE",
+                    "10",
+                )
+            ),
+        ),
+    )
+except ValueError:
+    FEE_RATE = 10
+
+
+# ============================================================
+# FASTAPI APP
+# ============================================================
+
+app = FastAPI(
+    title="BeatHub - The Home of Beats",
+)
+
+
+# ============================================================
+# SESSION CONFIGURATION
+# ============================================================
+
+SESSION_SECRET = os.getenv(
+    "SESSION_SECRET",
+    "CHANGE_THIS_SESSION_SECRET_IN_PRODUCTION",
+)
+
+SESSION_HTTPS_ONLY = (
+    os.getenv(
+        "SESSION_HTTPS_ONLY",
+        "false",
+    ).lower()
+    == "true"
+)
+
+try:
+    SESSION_MAX_AGE = int(
+        os.getenv(
+            "SESSION_MAX_AGE",
+            str(60 * 60 * 24 * 30),
         )
     )
-)
+except ValueError:
+    SESSION_MAX_AGE = 60 * 60 * 24 * 30
 
-app=FastAPI(
-    title='BeatHub - The Home of Beats'
-)
 
 app.add_middleware(
     SessionMiddleware,
-    secret_key=os.getenv(
-        'SESSION_SECRET',
-        'CHANGE_THIS_SESSION_SECRET_IN_PRODUCTION'
-    ),
-    same_site='lax',
-    https_only=(
-        os.getenv(
-            'SESSION_HTTPS_ONLY',
-            'false'
-        ).lower()=='true'
-    ),
-    max_age=int(
-        os.getenv(
-            'SESSION_MAX_AGE',
-            str(60 * 60 * 24 * 30)
-        )
-    )
+    secret_key=SESSION_SECRET,
+    same_site="lax",
+    https_only=SESSION_HTTPS_ONLY,
+    max_age=SESSION_MAX_AGE,
 )
+
+
+# ============================================================
+# STATIC FILES / TEMPLATES
+# ============================================================
 
 app.mount(
-    '/static',
-    StaticFiles(directory=str(STATIC)),
-    name='static'
+    "/static",
+    StaticFiles(
+        directory=str(STATIC),
+    ),
+    name="static",
 )
 
-templates=Jinja2Templates(
-    directory=str(BASE/'templates')
+
+templates = Jinja2Templates(
+    directory=str(BASE / "templates"),
 )
+
+
+# ============================================================
+# DATABASE INITIALIZATION
+# ============================================================
 
 init_db()
 
 
+# ============================================================
+# AUTH HELPERS
+# ============================================================
+
 def _normalize_login_email(value):
-    """Normalize login/signup emails without changing passwords."""
-    return (value or "").strip().casefold()
+    """
+    Normalize login/signup email addresses.
+
+    Passwords are never changed here.
+    """
+    return (
+        value or ""
+    ).strip().casefold()
 
 
 def _load_producer_from_session(request):
-    """Resolve the producer from the signed Starlette session cookie."""
-    raw_id=request.session.get("producer_id")
+    """
+    Resolve producer from the signed Starlette session.
+    """
+
+    raw_id = request.session.get(
+        "producer_id"
+    )
+
     try:
-        producer_id=int(raw_id)
-    except (TypeError, ValueError):
+        producer_id = int(raw_id)
+    except (
+        TypeError,
+        ValueError,
+    ):
         return None
+
     if producer_id <= 0:
         return None
 
-    c=get_db()
+    c = get_db()
+
     try:
         return c.execute(
-            "SELECT * FROM producers WHERE id=? LIMIT 1",
-            (producer_id,)
+            """
+            SELECT *
+            FROM producers
+            WHERE id=?
+            LIMIT 1
+            """,
+            (
+                producer_id,
+            ),
         ).fetchone()
+
     finally:
         c.close()
 
 
 def _require_producer(request):
-    producer=_load_producer_from_session(request)
+    """
+    Require a valid producer session.
+    """
+
+    producer = _load_producer_from_session(
+        request
+    )
+
     if producer is None:
-        # Remove a stale/invalid producer session so it cannot repeatedly
-        # produce an authentication failure after logout or DB changes.
-        request.session.pop("producer_id", None)
-        request.session.pop("remember_me", None)
-        raise HTTPException(401, "Login required")
+        request.session.pop(
+            "producer_id",
+            None,
+        )
+
+        request.session.pop(
+            "remember_me",
+            None,
+        )
+
+        raise HTTPException(
+            status_code=401,
+            detail="Login required",
+        )
+
     return producer
 
 
-def _verify_login_password(password, stored_hash):
-    """Verify using the project's auth implementation without mutating either value."""
+def _verify_login_password(
+    password,
+    stored_hash,
+):
+    """
+    Verify password using the existing auth implementation.
+    """
+
     if not password or not stored_hash:
         return False
+
     try:
-        result=auth.verify_password(password, stored_hash)
-        return bool(result)
+        return bool(
+            auth.verify_password(
+                password,
+                stored_hash,
+            )
+        )
+
     except Exception:
-        # Never turn an authentication error into a successful login.
         return False
 
 
-# Keep the rest of the application on one canonical producer-session path.
-# This is deliberately strict: no producer is accepted without a valid DB row
-# referenced by the signed session cookie.
-auth.current_producer=_load_producer_from_session
-auth.require_producer=_require_producer
+# Keep the entire application on one producer-session path.
+auth.current_producer = (
+    _load_producer_from_session
+)
+
+auth.require_producer = (
+    _require_producer
+)
 
 
-def render(n,r,**k):
-    k.update(
-        request=r,
-        producer=auth.current_producer(r),
-        super_admin=auth.is_super_admin(r)
+# ============================================================
+# RENDER HELPERS
+# ============================================================
+
+def render(
+    template_name,
+    request,
+    **kwargs,
+):
+    kwargs.update(
+        request=request,
+        producer=auth.current_producer(
+            request
+        ),
+        super_admin=auth.is_super_admin(
+            request
+        ),
     )
 
     return templates.TemplateResponse(
-        n,
-        k
+        template_name,
+        kwargs,
     )
 
 
-def render_no_store(n,r,**k):
+def render_no_store(
+    template_name,
+    request,
+    **kwargs,
+):
     """
-    Render sensitive authentication pages without allowing
-    browser/proxy caching of the page or submitted credentials.
+    Render sensitive pages with cache prevention.
     """
-    response=render(n,r,**k)
 
-    response.headers['Cache-Control'] = (
-        'no-store, no-cache, must-revalidate, '
-        'max-age=0, private'
+    response = render(
+        template_name,
+        request,
+        **kwargs,
     )
-    response.headers['Pragma'] = 'no-cache'
-    response.headers['Expires'] = '0'
+
+    response.headers[
+        "Cache-Control"
+    ] = (
+        "no-store, no-cache, "
+        "must-revalidate, max-age=0, private"
+    )
+
+    response.headers[
+        "Pragma"
+    ] = "no-cache"
+
+    response.headers[
+        "Expires"
+    ] = "0"
 
     return response
 
 
+# ============================================================
+# GENERAL HELPERS
+# ============================================================
+
 def now():
-    return datetime.now(timezone.utc)
+    return datetime.now(
+        timezone.utc
+    )
 
 
 def iso(dt):
@@ -357,161 +347,282 @@ def iso(dt):
     ).isoformat()
 
 
-def parse_iso(v):
+def parse_iso(value):
     return datetime.fromisoformat(
-        v.replace(
-            'Z',
-            '+00:00'
+        value.replace(
+            "Z",
+            "+00:00",
         )
     ).astimezone(
         timezone.utc
     )
 
 
-def ensure_wallet(c,pid):
+def ensure_wallet(
+    c,
+    producer_id,
+):
     c.execute(
-        '''
+        """
         INSERT OR IGNORE INTO producer_wallets(
             producer_id
         )
         VALUES(?)
-        ''',
-        (pid,)
+        """,
+        (
+            producer_id,
+        ),
     )
 
 
-def app_url(r):
+def app_url(request):
     return (
         os.getenv(
-            'APP_BASE_URL',
-            ''
-        ).rstrip('/')
-        or str(r.base_url).rstrip('/')
+            "APP_BASE_URL",
+            "",
+        ).rstrip("/")
+        or str(
+            request.base_url
+        ).rstrip("/")
     )
 
 
-def send_reset(to,url):
-    h=os.getenv('SMTP_HOST','')
-    u=os.getenv('SMTP_USERNAME','')
-    pw=os.getenv('SMTP_PASSWORD','')
-    fr=(
-        os.getenv('SMTP_FROM_EMAIL','').strip()
-        or os.getenv('SMTP_FROM','').strip()
-        or u
+# ============================================================
+# EMAIL / PASSWORD RESET
+# ============================================================
+
+def send_reset(
+    to,
+    url,
+):
+    host = os.getenv(
+        "SMTP_HOST",
+        "",
     )
-    from_name=os.getenv(
-        'SMTP_FROM_NAME',
-        'BeatHub'
-    ).strip() or 'BeatHub'
+
+    username = os.getenv(
+        "SMTP_USERNAME",
+        "",
+    )
+
+    password = os.getenv(
+        "SMTP_PASSWORD",
+        "",
+    )
+
+    sender = (
+        os.getenv(
+            "SMTP_FROM_EMAIL",
+            "",
+        ).strip()
+        or os.getenv(
+            "SMTP_FROM",
+            "",
+        ).strip()
+        or username
+    )
+
+    sender_name = (
+        os.getenv(
+            "SMTP_FROM_NAME",
+            "BeatHub",
+        ).strip()
+        or "BeatHub"
+    )
 
     if not all(
         (
-            h,
-            u,
-            pw,
-            fr
+            host,
+            username,
+            password,
+            sender,
         )
     ):
         raise RuntimeError(
-            'Email is not configured.'
+            "Email is not configured."
         )
 
-    m=EmailMessage()
-    m['Subject']='Reset your BeatHub password'
-    m['From']=f'{from_name} <{fr}>'
-    m['To']=to
+    message = EmailMessage()
 
-    m.set_content(
-        f'''Use this secure link to reset your BeatHub password. It expires in 30 minutes:
-
-{url}'''
+    message["Subject"] = (
+        "Reset your BeatHub password"
     )
 
-    port=int(
-        os.getenv(
-            'SMTP_PORT',
-            '587'
-        )
+    message["From"] = (
+        f"{sender_name} <{sender}>"
     )
 
-    with smtplib.SMTP(
-        h,
-        port,
-        timeout=20
-    ) as s:
-        s.starttls(
-            context=ssl.create_default_context()
-        )
-        s.login(
-            u,
-            pw
-        )
-        s.send_message(m)
+    message["To"] = to
 
+    message.set_content(
+        f"""
+Use this secure link to reset your BeatHub password.
+It expires in 30 minutes:
 
-def save_file(up,folder,prefix,allowed,maxb):
-    if not up or not up.filename:
-        raise HTTPException(
-            400,
-            'File is required.'
-        )
-
-    ext=Path(
-        up.filename
-    ).suffix.lower()
-
-    if ext not in allowed:
-        raise HTTPException(
-            400,
-            'Unsupported file type.'
-        )
-
-    path=folder/(
-        uuid.uuid4().hex+ext
+{url}
+"""
     )
-
-    n=0
 
     try:
-        with path.open('wb') as f:
+        port = int(
+            os.getenv(
+                "SMTP_PORT",
+                "587",
+            )
+        )
+    except ValueError:
+        port = 587
+
+    with smtplib.SMTP(
+        host,
+        port,
+        timeout=20,
+    ) as server:
+
+        server.starttls(
+            context=ssl.create_default_context()
+        )
+
+        server.login(
+            username,
+            password,
+        )
+
+        server.send_message(
+            message
+        )
+
+
+# ============================================================
+# SECURE FILE UPLOAD
+# ============================================================
+
+def save_file(
+    upload,
+    folder,
+    prefix,
+    allowed_extensions,
+    max_bytes,
+):
+    """
+    Save an uploaded file using a random UUID filename.
+
+    Returns the public static path.
+    """
+
+    if not upload or not upload.filename:
+        raise HTTPException(
+            status_code=400,
+            detail="File is required.",
+        )
+
+    extension = Path(
+        upload.filename
+    ).suffix.lower()
+
+    if extension not in allowed_extensions:
+        raise HTTPException(
+            status_code=400,
+            detail="Unsupported file type.",
+        )
+
+    destination = (
+        folder
+        / (
+            uuid.uuid4().hex
+            + extension
+        )
+    )
+
+    total_bytes = 0
+
+    try:
+        with destination.open(
+            "wb"
+        ) as output:
+
             while True:
-                ch=up.file.read(
-                    1024*1024
+
+                chunk = upload.file.read(
+                    1024 * 1024
                 )
 
-                if not ch:
+                if not chunk:
                     break
 
-                n+=len(ch)
+                total_bytes += len(
+                    chunk
+                )
 
-                if n>maxb:
+                if total_bytes > max_bytes:
                     raise HTTPException(
-                        413,
-                        'File too large.'
+                        status_code=413,
+                        detail="File too large.",
                     )
 
-                f.write(ch)
+                output.write(
+                    chunk
+                )
 
     except Exception:
-        path.unlink(
+        destination.unlink(
             missing_ok=True
         )
         raise
 
-    return prefix+'/'+path.name
+    return (
+        prefix
+        + "/"
+        + destination.name
+    )
 
+
+def delete_static_file(
+    public_path,
+):
+    """
+    Safely delete one file belonging to BeatHub static storage.
+    """
+
+    if not public_path:
+        return
+
+    try:
+        path = (
+            BASE
+            / public_path.lstrip("/")
+        ).resolve()
+
+        static_root = (
+            STATIC.resolve()
+        )
+
+        if static_root in path.parents:
+            path.unlink(
+                missing_ok=True
+            )
+
+    except Exception:
+        pass
+
+
+# ============================================================
+# HEALTH / ROOT
+# ============================================================
 
 @app.api_route(
-    '/health',
-    methods=['GET','HEAD']
+    "/health",
+    methods=["GET", "HEAD"],
 )
 def health():
-    return Response('OK')
+    return Response(
+        "OK"
+    )
 
 
 @app.api_route(
-    '/',
-    methods=['HEAD']
+    "/",
+    methods=["HEAD"],
 )
 def head():
     return Response(
@@ -519,185 +630,503 @@ def head():
     )
 
 
-@app.get('/')
-def home(r:Request):
-    c=get_db()
+# ============================================================
+# HOME
+# ============================================================
+
+@app.get("/")
+def home(
+    r: Request,
+):
+    c = get_db()
 
     try:
-        hot=c.execute(
-            '''
+
+        hot = c.execute(
+            """
             SELECT
                 b.*,
-                p.name producer_name,
-                p.slug producer_slug
+                p.name AS producer_name,
+                p.slug AS producer_slug
             FROM beats b
             JOIN producers p
                 ON p.id=b.producer_id
             WHERE b.is_hot_pick=1
             ORDER BY b.created_at DESC
             LIMIT 8
-            '''
+            """
         ).fetchall()
 
-        services=c.execute(
-            '''
+        services = c.execute(
+            """
             SELECT
                 s.*,
-                p.name producer_name,
-                p.slug producer_slug
+                p.name AS producer_name,
+                p.slug AS producer_slug
             FROM session_services s
             JOIN producers p
                 ON p.id=s.producer_id
             WHERE s.active=1
             ORDER BY s.created_at DESC
             LIMIT 6
-            '''
+            """
         ).fetchall()
 
     finally:
         c.close()
 
     return render(
-        'home.html',
+        "home.html",
         r,
         hot_beats=hot,
-        services=services
+        services=services,
     )
 
 
-@app.get('/terms')
-def terms(r:Request):
+# ============================================================
+# TERMS
+# ============================================================
+
+@app.get("/terms")
+def terms(
+    r: Request,
+):
     return render(
-        'terms.html',
-        r
+        "terms.html",
+        r,
     )
 
 
-@app.get('/signup')
-def signup_page(r:Request):
-    if auth.current_producer(r): return RedirectResponse('/admin',303)
-    return render_no_store('signup.html',r,error=None)
+# ============================================================
+# PRODUCER SIGNUP
+# ============================================================
 
-@app.post('/signup')
-def signup(r:Request,name:str=Form(...),email:str=Form(...),password:str=Form(...),confirm_password:str|None=Form(None),accept_terms:str|None=Form(None)):
-    name=name.strip(); email=_normalize_login_email(email)
-    if not name: return render_no_store('signup.html',r,error='Your producer or stage name is required.')
-    if '@' not in email or len(email)>254: return render_no_store('signup.html',r,error='Enter a valid email address.')
-    if len(password)<8: return render_no_store('signup.html',r,error='Password must be at least 8 characters.')
-    if confirm_password is not None and password!=confirm_password: return render_no_store('signup.html',r,error='Passwords do not match.')
-    c=get_db()
-    try:
-        if c.execute('SELECT 1 FROM producers WHERE lower(trim(email))=?',(email,)).fetchone(): return render_no_store('signup.html',r,error='Email already exists. Please login or reset your password.')
-        pid=c.execute('INSERT INTO producers(slug,email,password_hash,name) VALUES(?,?,?,?)',(unique_slug(c,name),email,auth.hash_password(password),name)).lastrowid
-        ensure_wallet(c,pid); c.commit()
-    except Exception:
-        c.rollback(); raise
-    finally: c.close()
-    r.session.clear()
-    r.session['producer_id']=int(pid)
-    response=RedirectResponse('/admin',303)
-    response.set_cookie(key='beathub_last_email',value=email,max_age=60*60*24*365,httponly=False,samesite='lax',secure=os.getenv('SESSION_HTTPS_ONLY','false').lower()=='true',path='/')
-    return response
+@app.get("/signup")
+def signup_page(
+    r: Request,
+):
+    if auth.current_producer(r):
+        return RedirectResponse(
+            "/admin",
+            303,
+        )
 
-@app.get('/login')
-def login_page(r:Request):
-    if auth.current_producer(r): return RedirectResponse('/admin',303)
-    return render_no_store('login.html',r,error=None,saved_email=r.cookies.get('beathub_last_email',''))
-
-@app.post('/login')
-def login(r:Request,email:str=Form(...),password:str=Form(...),remember_me:str|None=Form(None)):
-    email=_normalize_login_email(email)
-    if not email or not password: return render_no_store('login.html',r,error='Enter your email and password.',saved_email=email)
-    c=get_db()
-    try: p=c.execute('SELECT * FROM producers WHERE lower(trim(email))=? LIMIT 1',(email,)).fetchone()
-    finally: c.close()
-    if not p or not _verify_login_password(password,p['password_hash']): return render_no_store('login.html',r,error='Incorrect email or password.',saved_email=email)
-    r.session.clear()
-    r.session['producer_id']=int(p['id'])
-    r.session['remember_me']=(remember_me=='true')
-    response=RedirectResponse('/admin',303)
-    response.set_cookie(key='beathub_last_email',value=email,max_age=60*60*24*365,httponly=False,samesite='lax',secure=os.getenv('SESSION_HTTPS_ONLY','false').lower()=='true',path='/')
-    return response
-
-@app.api_route('/logout',methods=['GET','POST'])
-def logout(r:Request):
-    r.session.clear()
-    response=RedirectResponse('/login',303)
-    response.delete_cookie('session',path='/')
-    response.delete_cookie('beathub_last_email',path='/')
-    response.headers['Cache-Control']='no-store, no-cache, must-revalidate, max-age=0, private'
-    response.headers['Pragma']='no-cache'
-    response.headers['Expires']='0'
-    return response
-
-
-@app.get('/forgot-password')
-def forgot_page(r:Request):
-    return render(
-        'forgot_password.html',
+    return render_no_store(
+        "signup.html",
         r,
         error=None,
-        message=None
     )
 
 
-@app.post('/forgot-password')
-def forgot(
-    r:Request,
-    email:str=Form(...)
+@app.post("/signup")
+def signup(
+    r: Request,
+    name: str = Form(...),
+    email: str = Form(...),
+    password: str = Form(...),
+    confirm_password: str | None = Form(None),
+    accept_terms: str | None = Form(None),
 ):
-    email=_normalize_login_email(email)
+    name = name.strip()
 
-    msg=(
-        'If an account exists for that email, '
-        'a reset link has been sent.'
+    email = _normalize_login_email(
+        email
     )
 
-    token=None
-    p=None
-    c=get_db()
+    if not name:
+        return render_no_store(
+            "signup.html",
+            r,
+            error=(
+                "Your producer or stage name "
+                "is required."
+            ),
+        )
+
+    if (
+        "@"
+        not in email
+        or len(email) > 254
+    ):
+        return render_no_store(
+            "signup.html",
+            r,
+            error="Enter a valid email address.",
+        )
+
+    if len(password) < 8:
+        return render_no_store(
+            "signup.html",
+            r,
+            error=(
+                "Password must be at least "
+                "8 characters."
+            ),
+        )
+
+    if (
+        confirm_password is not None
+        and password != confirm_password
+    ):
+        return render_no_store(
+            "signup.html",
+            r,
+            error="Passwords do not match.",
+        )
+
+    c = get_db()
 
     try:
-        p=c.execute(
-            '''
-            SELECT id,email
+
+        existing = c.execute(
+            """
+            SELECT 1
             FROM producers
-            WHERE email=?
-            ''',
-            (email,)
+            WHERE lower(trim(email))=?
+            """,
+            (
+                email,
+            ),
         ).fetchone()
 
-        if p:
-            token=auth.new_token()
+        if existing:
+            return render_no_store(
+                "signup.html",
+                r,
+                error=(
+                    "Email already exists. "
+                    "Please login or reset "
+                    "your password."
+                ),
+            )
+
+        producer_id = c.execute(
+            """
+            INSERT INTO producers(
+                slug,
+                email,
+                password_hash,
+                name
+            )
+            VALUES(?,?,?,?)
+            """,
+            (
+                unique_slug(
+                    c,
+                    name,
+                ),
+                email,
+                auth.hash_password(
+                    password
+                ),
+                name,
+            ),
+        ).lastrowid
+
+        ensure_wallet(
+            c,
+            producer_id,
+        )
+
+        c.commit()
+
+    except Exception:
+        c.rollback()
+        raise
+
+    finally:
+        c.close()
+
+    r.session.clear()
+
+    r.session[
+        "producer_id"
+    ] = int(
+        producer_id
+    )
+
+    response = RedirectResponse(
+        "/admin",
+        303,
+    )
+
+    response.set_cookie(
+        key="beathub_last_email",
+        value=email,
+        max_age=60 * 60 * 24 * 365,
+        httponly=False,
+        samesite="lax",
+        secure=SESSION_HTTPS_ONLY,
+        path="/",
+    )
+
+    return response
+
+
+# ============================================================
+# PRODUCER LOGIN
+# ============================================================
+
+@app.get("/login")
+def login_page(
+    r: Request,
+):
+    if auth.current_producer(r):
+        return RedirectResponse(
+            "/admin",
+            303,
+        )
+
+    return render_no_store(
+        "login.html",
+        r,
+        error=None,
+        saved_email=r.cookies.get(
+            "beathub_last_email",
+            "",
+        ),
+    )
+
+
+@app.post("/login")
+def login(
+    r: Request,
+    email: str = Form(...),
+    password: str = Form(...),
+    remember_me: str | None = Form(None),
+):
+    email = _normalize_login_email(
+        email
+    )
+
+    if not email or not password:
+        return render_no_store(
+            "login.html",
+            r,
+            error=(
+                "Enter your email and password."
+            ),
+            saved_email=email,
+        )
+
+    c = get_db()
+
+    try:
+        producer = c.execute(
+            """
+            SELECT *
+            FROM producers
+            WHERE lower(trim(email))=?
+            LIMIT 1
+            """,
+            (
+                email,
+            ),
+        ).fetchone()
+
+    finally:
+        c.close()
+
+    if (
+        not producer
+        or not _verify_login_password(
+            password,
+            producer["password_hash"],
+        )
+    ):
+        return render_no_store(
+            "login.html",
+            r,
+            error="Incorrect email or password.",
+            saved_email=email,
+        )
+
+    # Completely replace any previous session.
+    r.session.clear()
+
+    r.session[
+        "producer_id"
+    ] = int(
+        producer["id"]
+    )
+
+    r.session[
+        "remember_me"
+    ] = (
+        remember_me == "true"
+    )
+
+    response = RedirectResponse(
+        "/admin",
+        303,
+    )
+
+    response.set_cookie(
+        key="beathub_last_email",
+        value=email,
+        max_age=60 * 60 * 24 * 365,
+        httponly=False,
+        samesite="lax",
+        secure=SESSION_HTTPS_ONLY,
+        path="/",
+    )
+
+    return response
+
+
+# ============================================================
+# PRODUCER LOGOUT
+# ============================================================
+
+@app.api_route(
+    "/logout",
+    methods=["GET", "POST"],
+)
+def logout(
+    request: Request,
+):
+    """
+    Complete producer logout.
+
+    Supports both:
+        POST /logout
+        GET  /logout
+
+    This makes the route compatible with either
+    a form button or an existing logout link.
+    """
+
+    # Destroy the Starlette session completely.
+    request.session.clear()
+
+    response = RedirectResponse(
+        url="/login",
+        status_code=303,
+    )
+
+    # Starlette's default session cookie.
+    response.delete_cookie(
+        "session",
+        path="/",
+    )
+
+    # Remove saved login email as requested.
+    response.delete_cookie(
+        "beathub_last_email",
+        path="/",
+    )
+
+    # Backward compatibility with the earlier cookie name.
+    response.delete_cookie(
+        "remember_email",
+        path="/",
+    )
+
+    # Prevent browser/proxy from showing
+    # cached authenticated pages after logout.
+    response.headers[
+        "Cache-Control"
+    ] = (
+        "no-store, no-cache, "
+        "must-revalidate, max-age=0, private"
+    )
+
+    response.headers[
+        "Pragma"
+    ] = "no-cache"
+
+    response.headers[
+        "Expires"
+    ] = "0"
+
+    return response
+
+
+# ============================================================
+# PASSWORD RESET
+# ============================================================
+
+@app.get("/forgot-password")
+def forgot_page(
+    r: Request,
+):
+    return render(
+        "forgot_password.html",
+        r,
+        error=None,
+        message=None,
+    )
+
+
+@app.post("/forgot-password")
+def forgot(
+    r: Request,
+    email: str = Form(...),
+):
+    email = _normalize_login_email(
+        email
+    )
+
+    message = (
+        "If an account exists for that email, "
+        "a reset link has been sent."
+    )
+
+    token = None
+    producer = None
+
+    c = get_db()
+
+    try:
+
+        producer = c.execute(
+            """
+            SELECT id, email
+            FROM producers
+            WHERE email=?
+            """,
+            (
+                email,
+            ),
+        ).fetchone()
+
+        if producer:
+
+            token = auth.new_token()
 
             c.execute(
-                '''
+                """
                 UPDATE password_reset_tokens
                 SET used_at=CURRENT_TIMESTAMP
                 WHERE producer_id=?
                 AND used_at IS NULL
-                ''',
-                (p['id'],)
+                """,
+                (
+                    producer["id"],
+                ),
             )
 
             c.execute(
-                '''
+                """
                 INSERT INTO password_reset_tokens(
                     producer_id,
                     token_hash,
                     expires_at
                 )
                 VALUES(?,?,?)
-                ''',
+                """,
                 (
-                    p['id'],
-                    auth.token_hash(token),
+                    producer["id"],
+                    auth.token_hash(
+                        token
+                    ),
                     iso(
-                        now()+timedelta(
+                        now()
+                        + timedelta(
                             minutes=30
                         )
-                    )
-                )
+                    ),
+                ),
             )
 
             c.commit()
@@ -705,117 +1134,132 @@ def forgot(
     finally:
         c.close()
 
-    if p:
+    if producer:
+
         try:
             send_reset(
-                p['email'],
-                app_url(r)+'/reset-password/'+token
+                producer["email"],
+                app_url(r)
+                + "/reset-password/"
+                + token,
             )
+
         except Exception:
             return render(
-                'forgot_password.html',
+                "forgot_password.html",
                 r,
                 error=(
-                    'Reset email could not be sent. '
-                    'Please try again later.'
+                    "Reset email could not be sent. "
+                    "Please try again later."
                 ),
-                message=None
+                message=None,
             )
 
     return render(
-        'forgot_password.html',
+        "forgot_password.html",
         r,
         error=None,
-        message=msg
+        message=message,
     )
 
 
-@app.get('/reset-password/{token}')
+@app.get(
+    "/reset-password/{token}"
+)
 def reset_page(
-    r:Request,
-    token:str
+    r: Request,
+    token: str,
 ):
     return render(
-        'reset_password.html',
+        "reset_password.html",
         r,
         token=token,
-        error=None
+        error=None,
     )
 
 
-@app.post('/reset-password/{token}')
+@app.post(
+    "/reset-password/{token}"
+)
 def reset(
-    r:Request,
-    token:str,
-    password:str=Form(...),
-    confirm_password:str=Form(...)
+    r: Request,
+    token: str,
+    password: str = Form(...),
+    confirm_password: str = Form(...),
 ):
     if (
-        len(password)<8
-        or password!=confirm_password
+        len(password) < 8
+        or password != confirm_password
     ):
         return render(
-            'reset_password.html',
+            "reset_password.html",
             r,
             token=token,
             error=(
-                'Passwords must match and be '
-                'at least 8 characters.'
-            )
+                "Passwords must match and be "
+                "at least 8 characters."
+            ),
         )
 
-    c=get_db()
+    c = get_db()
 
     try:
-        x=c.execute(
-            '''
+
+        reset_record = c.execute(
+            """
             SELECT *
             FROM password_reset_tokens
             WHERE token_hash=?
             AND used_at IS NULL
-            ''',
+            """,
             (
-                auth.token_hash(token),
-            )
+                auth.token_hash(
+                    token
+                ),
+            ),
         ).fetchone()
 
         if (
-            not x
+            not reset_record
             or parse_iso(
-                x['expires_at']
-            )<now()
+                reset_record["expires_at"]
+            ) < now()
         ):
             return render(
-                'reset_password.html',
+                "reset_password.html",
                 r,
                 token=token,
                 error=(
-                    'This reset link is invalid '
-                    'or expired.'
-                )
+                    "This reset link is invalid "
+                    "or expired."
+                ),
             )
 
         c.execute(
-            '''
+            """
             UPDATE producers
             SET password_hash=?
             WHERE id=?
-            ''',
+            """,
             (
-                auth.hash_password(password),
-                x['producer_id']
-            )
+                auth.hash_password(
+                    password
+                ),
+                reset_record[
+                    "producer_id"
+                ],
+            ),
         )
 
         c.execute(
-            '''
+            """
             UPDATE password_reset_tokens
             SET used_at=CURRENT_TIMESTAMP
             WHERE id=?
-            ''',
+            """,
             (
-                x['id'],
-            )
+                reset_record["id"],
+            ),
         )
 
         c.commit()
@@ -824,270 +1268,340 @@ def reset(
         c.close()
 
     return RedirectResponse(
-        '/login',
-        303
+        "/login",
+        303,
     )
 
 
-@app.get('/p/{slug}')
+# ============================================================
+# PUBLIC PRODUCER STORE
+# ============================================================
+
+@app.get("/p/{slug}")
 def feed(
-    r:Request,
-    slug:str
+    r: Request,
+    slug: str,
 ):
-    c=get_db()
+    c = get_db()
 
     try:
-        p=c.execute(
-            '''
+
+        producer = c.execute(
+            """
             SELECT *
             FROM producers
             WHERE slug=?
-            ''',
-            (slug,)
+            """,
+            (
+                slug,
+            ),
         ).fetchone()
 
-        if not p:
+        if not producer:
             raise HTTPException(
                 404,
-                'Producer not found'
+                "Producer not found",
             )
 
-        beats=c.execute(
-            '''
+        beats = c.execute(
+            """
             SELECT *
             FROM beats
             WHERE producer_id=?
             ORDER BY
                 is_hot_pick DESC,
                 created_at DESC
-            ''',
-            (p['id'],)
+            """,
+            (
+                producer["id"],
+            ),
         ).fetchall()
 
-        services=c.execute(
-            '''
+        services = c.execute(
+            """
             SELECT *
             FROM session_services
             WHERE producer_id=?
             AND active=1
             ORDER BY created_at DESC
-            ''',
-            (p['id'],)
+            """,
+            (
+                producer["id"],
+            ),
         ).fetchall()
 
-        albums=c.execute(
-            '''
-            SELECT a.*, COUNT(at.id) AS track_count
+        albums = c.execute(
+            """
+            SELECT
+                a.*,
+                COUNT(at.id) AS track_count
             FROM albums a
-            LEFT JOIN album_tracks at ON at.album_id=a.id
-            WHERE a.producer_id=? AND a.is_published=1
+            LEFT JOIN album_tracks at
+                ON at.album_id=a.id
+            WHERE a.producer_id=?
+            AND a.is_published=1
             GROUP BY a.id
             ORDER BY a.created_at DESC
-            ''',
-            (p['id'],)
+            """,
+            (
+                producer["id"],
+            ),
         ).fetchall()
 
     finally:
         c.close()
 
     return render(
-        'feed.html',
+        "feed.html",
         r,
-        profile=p,
+        profile=producer,
         beats=beats,
         albums=albums,
-        services=services
+        services=services,
     )
 
 
-@app.get('/p/{slug}/beat/{beat_id}')
+# ============================================================
+# PUBLIC BEAT PAGE
+# ============================================================
+
+@app.get(
+    "/p/{slug}/beat/{beat_id}"
+)
 def beat(
-    r:Request,
-    slug:str,
-    beat_id:int
+    r: Request,
+    slug: str,
+    beat_id: int,
 ):
-    c=get_db()
+    c = get_db()
 
     try:
-        p=c.execute(
-            '''
+
+        producer = c.execute(
+            """
             SELECT *
             FROM producers
             WHERE slug=?
-            ''',
-            (slug,)
+            """,
+            (
+                slug,
+            ),
         ).fetchone()
 
-        b=c.execute(
-            '''
+        beat_record = c.execute(
+            """
             SELECT *
             FROM beats
             WHERE id=?
-            ''',
-            (beat_id,)
+            """,
+            (
+                beat_id,
+            ),
         ).fetchone()
 
     finally:
         c.close()
 
     if (
-        not p
-        or not b
-        or b['producer_id']!=p['id']
+        not producer
+        or not beat_record
+        or beat_record["producer_id"]
+        != producer["id"]
     ):
         raise HTTPException(
             404,
-            'Beat not found'
+            "Beat not found",
         )
 
     return render(
-        'beat.html',
+        "beat.html",
         r,
-        profile=p,
-        beat=b
+        profile=producer,
+        beat=beat_record,
     )
 
 
-@app.get('/admin')
+# ============================================================
+# PRODUCER ADMIN DASHBOARD
+# ============================================================
+
+@app.get("/admin")
 def admin(
-    r:Request,
+    r: Request,
     producer=Depends(
         auth.require_producer
-    )
+    ),
 ):
-    c=get_db()
+    c = get_db()
 
     try:
+
         ensure_wallet(
             c,
-            producer['id']
+            producer["id"],
         )
 
-        w=c.execute(
-            '''
+        # Make sure a newly-created wallet
+        # is persisted.
+        c.commit()
+
+        wallet = c.execute(
+            """
             SELECT *
             FROM producer_wallets
             WHERE producer_id=?
-            ''',
-            (producer['id'],)
+            """,
+            (
+                producer["id"],
+            ),
         ).fetchone()
 
-        beats=c.execute(
-            '''
+        beats = c.execute(
+            """
             SELECT *
             FROM beats
             WHERE producer_id=?
             ORDER BY created_at DESC
-            ''',
-            (producer['id'],)
+            """,
+            (
+                producer["id"],
+            ),
         ).fetchall()
 
-        albums=c.execute(
-            '''
-            SELECT a.*, COUNT(at.id) AS track_count
+        albums = c.execute(
+            """
+            SELECT
+                a.*,
+                COUNT(at.id) AS track_count
             FROM albums a
-            LEFT JOIN album_tracks at ON at.album_id=a.id
+            LEFT JOIN album_tracks at
+                ON at.album_id=a.id
             WHERE a.producer_id=?
             GROUP BY a.id
             ORDER BY a.created_at DESC
-            ''',
-            (producer['id'],)
+            """,
+            (
+                producer["id"],
+            ),
         ).fetchall()
 
-        services=c.execute(
-            '''
+        services = c.execute(
+            """
             SELECT *
             FROM session_services
             WHERE producer_id=?
             ORDER BY created_at DESC
-            ''',
-            (producer['id'],)
+            """,
+            (
+                producer["id"],
+            ),
         ).fetchall()
 
-        avail=c.execute(
-            '''
+        availability = c.execute(
+            """
             SELECT *
             FROM producer_availability
             WHERE producer_id=?
             ORDER BY weekday
-            ''',
-            (producer['id'],)
+            """,
+            (
+                producer["id"],
+            ),
         ).fetchall()
 
-        bookings=c.execute(
-            '''
+        bookings = c.execute(
+            """
             SELECT
                 b.*,
-                s.title service_title
+                s.title AS service_title
             FROM session_bookings b
             JOIN session_services s
                 ON s.id=b.service_id
             WHERE b.producer_id=?
             ORDER BY b.start_at DESC
             LIMIT 50
-            ''',
-            (producer['id'],)
+            """,
+            (
+                producer["id"],
+            ),
         ).fetchall()
 
-        withdrawals=c.execute(
-            '''
+        withdrawals = c.execute(
+            """
             SELECT *
             FROM withdrawals
             WHERE producer_id=?
             ORDER BY requested_at DESC
             LIMIT 20
-            ''',
-            (producer['id'],)
+            """,
+            (
+                producer["id"],
+            ),
         ).fetchall()
 
     finally:
         c.close()
 
     return render(
-        'admin.html',
+        "admin.html",
         r,
-        wallet=w,
+        wallet=wallet,
         beats=beats,
         albums=albums,
         services=services,
-        availability=avail,
+        availability=availability,
         bookings=bookings,
         withdrawals=withdrawals,
         totals={
-            'available_balance':
-                w['available_balance'],
-            'total_earnings':
-                w['total_earnings'],
-            'total_withdrawn':
-                w['total_withdrawn']
-        }
+            "available_balance":
+                wallet[
+                    "available_balance"
+                ],
+
+            "total_earnings":
+                wallet[
+                    "total_earnings"
+                ],
+
+            "total_withdrawn":
+                wallet[
+                    "total_withdrawn"
+                ],
+        },
     )
 
 
-@app.post('/admin/profile')
+# ============================================================
+# PRODUCER PROFILE
+# ============================================================
+
+@app.post(
+    "/admin/profile"
+)
 def profile(
-    r:Request,
-    name:str=Form(...),
-    bio:str=Form(''),
-    phone:str=Form(''),
-    payout_phone:str=Form(''),
+    r: Request,
+    name: str = Form(...),
+    bio: str = Form(""),
+    phone: str = Form(""),
+    payout_phone: str = Form(""),
     producer=Depends(
         auth.require_producer
-    )
+    ),
 ):
-    pp=(
+    payout = (
         mpesa.normalize_phone(
             payout_phone
         )
         if payout_phone.strip()
-        else ''
+        else ""
     )
 
-    c=get_db()
+    c = get_db()
 
     try:
+
         c.execute(
-            '''
+            """
             UPDATE producers
             SET
                 name=?,
@@ -1095,14 +1609,14 @@ def profile(
                 phone=?,
                 payout_phone=?
             WHERE id=?
-            ''',
+            """,
             (
                 name.strip()[:100],
                 bio.strip()[:2000],
                 phone.strip()[:30],
-                pp,
-                producer['id']
-            )
+                payout,
+                producer["id"],
+            ),
         )
 
         c.commit()
@@ -1111,75 +1625,95 @@ def profile(
         c.close()
 
     return RedirectResponse(
-        '/admin',
-        303
+        "/admin",
+        303,
     )
 
 
-@app.post('/admin/beat')
+# ============================================================
+# SINGLE BEAT UPLOAD
+# ============================================================
+
+@app.post("/admin/beat")
 def add_beat(
-    r:Request,
-    title:str=Form(...),
-    genre:str=Form(''),
-    bpm:str=Form(''),
-    price:int=Form(...),
-    is_hot_pick:str=Form('0'),
-    cover:UploadFile=File(...),
-    audio:UploadFile=File(...),
+    r: Request,
+    title: str = Form(...),
+    genre: str = Form(""),
+    bpm: str = Form(""),
+    price: int = Form(...),
+    is_hot_pick: str = Form("0"),
+    cover: UploadFile = File(...),
+    audio: UploadFile = File(...),
     producer=Depends(
         auth.require_producer
-    )
+    ),
 ):
-    if price<1:
+    if price < 1:
         raise HTTPException(
             400,
-            'Invalid price.'
+            "Invalid price.",
         )
 
-    bpmv=(
-        int(bpm)
-        if bpm.strip()
-        else None
-    )
+    if bpm.strip():
 
-    cp=save_file(
+        try:
+            bpm_value = int(
+                bpm.strip()
+            )
+        except ValueError:
+            raise HTTPException(
+                400,
+                "BPM must be a number.",
+            )
+
+        if bpm_value < 1:
+            raise HTTPException(
+                400,
+                "Invalid BPM.",
+            )
+
+    else:
+        bpm_value = None
+
+    cover_path = save_file(
         cover,
         COVERS,
-        '/static/uploads/covers',
+        "/static/uploads/covers",
         {
-            '.jpg',
-            '.jpeg',
-            '.png',
-            '.webp'
+            ".jpg",
+            ".jpeg",
+            ".png",
+            ".webp",
         },
-        10*1024*1024
+        10 * 1024 * 1024,
     )
 
     try:
-        ap=save_file(
+
+        audio_path = save_file(
             audio,
             AUDIO,
-            '/static/uploads/audio',
+            "/static/uploads/audio",
             {
-                '.mp3',
-                '.wav',
-                '.m4a'
+                ".mp3",
+                ".wav",
+                ".m4a",
             },
-            100*1024*1024
+            100 * 1024 * 1024,
         )
+
     except Exception:
-        (
-            BASE/cp.lstrip('/')
-        ).unlink(
-            missing_ok=True
+        delete_static_file(
+            cover_path
         )
         raise
 
-    c=get_db()
+    c = get_db()
 
     try:
+
         c.execute(
-            '''
+            """
             INSERT INTO beats(
                 producer_id,
                 title,
@@ -1191,181 +1725,361 @@ def add_beat(
                 is_hot_pick
             )
             VALUES(?,?,?,?,?,?,?,?)
-            ''',
+            """,
             (
-                producer['id'],
+                producer["id"],
                 title.strip()[:200],
                 genre.strip()[:100],
-                bpmv,
+                bpm_value,
                 price,
-                cp,
-                ap,
-                1
-                if is_hot_pick.lower()
-                in (
-                    '1',
-                    'on',
-                    'true'
-                )
-                else 0
-            )
+                cover_path,
+                audio_path,
+                (
+                    1
+                    if is_hot_pick.lower()
+                    in (
+                        "1",
+                        "on",
+                        "true",
+                    )
+                    else 0
+                ),
+            ),
         )
 
         c.commit()
+
+    except Exception:
+        c.rollback()
+
+        delete_static_file(
+            cover_path
+        )
+
+        delete_static_file(
+            audio_path
+        )
+
+        raise
 
     finally:
         c.close()
 
     return RedirectResponse(
-        '/admin',
-        303
+        "/admin",
+        303,
     )
 
 
-@app.post('/admin/album')
+# ============================================================
+# ALBUM / MULTI-TRACK UPLOAD
+# ============================================================
+
+@app.post("/admin/album")
 def add_album(
-    r:Request,
-    album_title:str=Form(...),
-    album_price:int=Form(...),
-    album_genre:str=Form(''),
-    cover:UploadFile=File(...),
-    tracks:list[UploadFile]=File(...),
-    producer=Depends(auth.require_producer)
+    r: Request,
+    album_title: str = Form(...),
+    album_price: int = Form(...),
+    album_genre: str = Form(""),
+    cover: UploadFile = File(...),
+    tracks: list[UploadFile] = File(...),
+    producer=Depends(
+        auth.require_producer
+    ),
 ):
-    title=album_title.strip()[:200]
-    genre=album_genre.strip()[:100]
+    """
+    Upload a complete album.
+
+    Album:
+        - title
+        - genre
+        - one cover
+        - price
+        - multiple audio tracks
+
+    Existing single-track upload is completely
+    independent and remains available.
+    """
+
+    title = (
+        album_title
+        .strip()
+        [:200]
+    )
+
+    genre = (
+        album_genre
+        .strip()
+        [:100]
+    )
+
     if not title:
-        raise HTTPException(400,'Album title is required.')
-    if album_price<1:
-        raise HTTPException(400,'Album price must be at least KES 1.')
-    if not tracks or len(tracks)>50:
-        raise HTTPException(400,'Upload between 1 and 50 tracks.')
-
-    cover_path=None
-    saved_audio=[]
-    try:
-        cover_path=save_file(
-            cover,COVERS,'/static/uploads/covers',
-            {'.jpg','.jpeg','.png','.webp'},10*1024*1024
+        raise HTTPException(
+            400,
+            "Album title is required.",
         )
-        seen_titles=set()
-        for index,upload in enumerate(tracks,1):
-            if not upload.filename:
-                raise HTTPException(400,f'Track {index} has no filename.')
-            track_title=Path(upload.filename).stem.strip()[:200] or f'Track {index}'
-            key=track_title.casefold()
-            if key in seen_titles:
-                track_title=f'{track_title} ({index})'
-            seen_titles.add(key)
-            audio_path=save_file(
-                upload,AUDIO,'/static/uploads/audio',
-                {'.mp3','.wav','.m4a'},100*1024*1024
-            )
-            saved_audio.append((index,track_title,audio_path))
 
-        c=get_db()
-        try:
-            c.execute('BEGIN IMMEDIATE')
-            album_id=c.execute(
-                "INSERT INTO albums(producer_id,title,genre,price,cover_path,is_published) VALUES(?,?,?,?,?,1)",
-                (producer['id'],title,genre,album_price,cover_path)
-            ).lastrowid
-            for track_number,track_title,audio_path in saved_audio:
-                c.execute(
-                    "INSERT INTO album_tracks(album_id,track_number,title,audio_path) VALUES(?,?,?,?)",
-                    (album_id,track_number,track_title,audio_path)
+    if album_price < 1:
+        raise HTTPException(
+            400,
+            "Album price must be at least KES 1.",
+        )
+
+    if not tracks:
+        raise HTTPException(
+            400,
+            "Upload at least one track.",
+        )
+
+    if len(tracks) > 50:
+        raise HTTPException(
+            400,
+            "You can upload a maximum of 50 tracks at once.",
+        )
+
+    cover_path = None
+    saved_audio = []
+
+    try:
+
+        # ----------------------------------------------------
+        # ALBUM COVER
+        # ----------------------------------------------------
+
+        cover_path = save_file(
+            cover,
+            ALBUM_COVERS,
+            "/static/uploads/covers",
+            {
+                ".jpg",
+                ".jpeg",
+                ".png",
+                ".webp",
+            },
+            10 * 1024 * 1024,
+        )
+
+        # ----------------------------------------------------
+        # TRACKS
+        # ----------------------------------------------------
+
+        seen_titles = set()
+
+        for index, upload in enumerate(
+            tracks,
+            start=1,
+        ):
+
+            if (
+                not upload
+                or not upload.filename
+            ):
+                raise HTTPException(
+                    400,
+                    f"Track {index} has no filename.",
                 )
+
+            extension = Path(
+                upload.filename
+            ).suffix.lower()
+
+            if extension not in {
+                ".mp3",
+                ".wav",
+                ".m4a",
+            }:
+                raise HTTPException(
+                    400,
+                    (
+                        f"Track {index} has an "
+                        "unsupported audio format."
+                    ),
+                )
+
+            # Automatically turn filename into title.
+            track_title = (
+                Path(
+                    upload.filename
+                ).stem
+                .strip()
+                [:200]
+            )
+
+            if not track_title:
+                track_title = (
+                    f"Track {index}"
+                )
+
+            original_key = (
+                track_title.casefold()
+            )
+
+            if original_key in seen_titles:
+                track_title = (
+                    f"{track_title} ({index})"
+                )
+
+            seen_titles.add(
+                original_key
+            )
+
+            audio_path = save_file(
+                upload,
+                AUDIO,
+                "/static/uploads/audio",
+                {
+                    ".mp3",
+                    ".wav",
+                    ".m4a",
+                },
+                100 * 1024 * 1024,
+            )
+
+            saved_audio.append(
+                (
+                    index,
+                    track_title,
+                    audio_path,
+                )
+            )
+
+        # ----------------------------------------------------
+        # DATABASE TRANSACTION
+        # ----------------------------------------------------
+
+        c = get_db()
+
+        try:
+
+            c.execute(
+                "BEGIN IMMEDIATE"
+            )
+
+            album_id = c.execute(
+                """
+                INSERT INTO albums(
+                    producer_id,
+                    title,
+                    genre,
+                    price,
+                    cover_path,
+                    is_published
+                )
+                VALUES(?,?,?,?,?,1)
+                """,
+                (
+                    producer["id"],
+                    title,
+                    genre,
+                    album_price,
+                    cover_path,
+                ),
+            ).lastrowid
+
+            for (
+                track_number,
+                track_title,
+                audio_path,
+            ) in saved_audio:
+
+                c.execute(
+                    """
+                    INSERT INTO album_tracks(
+                        album_id,
+                        track_number,
+                        title,
+                        audio_path
+                    )
+                    VALUES(?,?,?,?)
+                    """,
+                    (
+                        album_id,
+                        track_number,
+                        track_title,
+                        audio_path,
+                    ),
+                )
+
             c.commit()
+
         except Exception:
             c.rollback()
             raise
+
         finally:
             c.close()
+
     except Exception:
-        if cover_path:
-            (BASE/cover_path.lstrip('/')).unlink(missing_ok=True)
-        for _,_,audio_path in saved_audio:
-            (BASE/audio_path.lstrip('/')).unlink(missing_ok=True)
+
+        # If anything goes wrong, don't leave orphan
+        # uploads sitting on the server.
+
+        delete_static_file(
+            cover_path
+        )
+
+        for (
+            _track_number,
+            _track_title,
+            audio_path,
+        ) in saved_audio:
+
+            delete_static_file(
+                audio_path
+            )
+
         raise
 
-    return RedirectResponse('/admin',303)
+    return RedirectResponse(
+        "/admin",
+        303,
+    )
 
 
-@app.post('/admin/album/{album_id}/publish')
+# ============================================================
+# ALBUM PUBLISH / UNPUBLISH
+# ============================================================
+
+@app.post(
+    "/admin/album/{album_id}/publish"
+)
 def publish_album(
-    album_id:int,
-    is_published:str=Form('1'),
-    producer=Depends(auth.require_producer)
-):
-    published=1 if str(is_published).lower() in ('1','true','on','yes') else 0
-    c=get_db()
-    try:
-        result=c.execute(
-            'UPDATE albums SET is_published=? WHERE id=? AND producer_id=?',
-            (published,album_id,producer['id'])
-        )
-        c.commit()
-    finally:
-        c.close()
-    if not result.rowcount:
-        raise HTTPException(404,'Album not found')
-    return RedirectResponse('/admin',303)
-
-
-@app.get('/p/{slug}/album/{album_id}')
-def album_page(r:Request,slug:str,album_id:int):
-    c=get_db()
-    try:
-        album=c.execute(
-            "SELECT a.*,p.name producer_name,p.slug producer_slug FROM albums a JOIN producers p ON p.id=a.producer_id WHERE a.id=? AND a.is_published=1 AND p.slug=?",
-            (album_id,slug)
-        ).fetchone()
-        tracks=c.execute(
-            'SELECT * FROM album_tracks WHERE album_id=? ORDER BY track_number',
-            (album_id,)
-        ).fetchall() if album else []
-    finally:
-        c.close()
-    if not album:
-        raise HTTPException(404,'Album not found')
-    return render('album.html',r,profile={'name':album['producer_name'],'slug':album['producer_slug']},album=album,tracks=tracks)
-
-
-@app.post('/admin/beat/{beat_id}/hot-pick')
-def hot_pick(
-    beat_id:int,
-    is_hot_pick:str=Form('0'),
+    album_id: int,
+    is_published: str = Form("1"),
     producer=Depends(
         auth.require_producer
-    )
+    ),
 ):
-    hot=(
+    published = (
         1
-        if str(is_hot_pick).lower()
+        if str(
+            is_published
+        ).lower()
         in (
-            '1',
-            'true',
-            'on',
-            'yes'
+            "1",
+            "true",
+            "on",
+            "yes",
         )
         else 0
     )
 
-    c=get_db()
+    c = get_db()
 
     try:
-        r=c.execute(
-            '''
-            UPDATE beats
-            SET is_hot_pick=?
+
+        result = c.execute(
+            """
+            UPDATE albums
+            SET is_published=?
             WHERE id=?
             AND producer_id=?
-            ''',
+            """,
             (
-                hot,
-                beat_id,
-                producer['id']
-            )
+                published,
+                album_id,
+                producer["id"],
+            ),
         )
 
         c.commit()
@@ -1373,44 +2087,192 @@ def hot_pick(
     finally:
         c.close()
 
-    if not r.rowcount:
+    if not result.rowcount:
         raise HTTPException(
             404,
-            'Beat not found'
+            "Album not found",
         )
 
     return RedirectResponse(
-        '/admin',
-        303
+        "/admin",
+        303,
     )
 
 
-@app.post('/admin/service')
-def add_service(
-    r:Request,
-    title:str=Form(...),
-    description:str=Form(''),
-    duration_minutes:int=Form(...),
-    price:int=Form(...),
-    location:str=Form(''),
+# ============================================================
+# PUBLIC ALBUM PAGE
+# ============================================================
+
+@app.get(
+    "/p/{slug}/album/{album_id}"
+)
+def album_page(
+    r: Request,
+    slug: str,
+    album_id: int,
+):
+    c = get_db()
+
+    try:
+
+        album = c.execute(
+            """
+            SELECT
+                a.*,
+                p.name AS producer_name,
+                p.slug AS producer_slug
+            FROM albums a
+            JOIN producers p
+                ON p.id=a.producer_id
+            WHERE a.id=?
+            AND a.is_published=1
+            AND p.slug=?
+            """,
+            (
+                album_id,
+                slug,
+            ),
+        ).fetchone()
+
+        tracks = (
+            c.execute(
+                """
+                SELECT *
+                FROM album_tracks
+                WHERE album_id=?
+                ORDER BY track_number
+                """,
+                (
+                    album_id,
+                ),
+            ).fetchall()
+            if album
+            else []
+        )
+
+    finally:
+        c.close()
+
+    if not album:
+        raise HTTPException(
+            404,
+            "Album not found",
+        )
+
+    return render(
+        "album.html",
+        r,
+        profile={
+            "name":
+                album[
+                    "producer_name"
+                ],
+            "slug":
+                album[
+                    "producer_slug"
+                ],
+        },
+        album=album,
+        tracks=tracks,
+    )
+
+
+# ============================================================
+# HOT PICK
+# ============================================================
+
+@app.post(
+    "/admin/beat/{beat_id}/hot-pick"
+)
+def hot_pick(
+    beat_id: int,
+    is_hot_pick: str = Form("0"),
     producer=Depends(
         auth.require_producer
+    ),
+):
+    hot = (
+        1
+        if str(
+            is_hot_pick
+        ).lower()
+        in (
+            "1",
+            "true",
+            "on",
+            "yes",
+        )
+        else 0
     )
+
+    c = get_db()
+
+    try:
+
+        result = c.execute(
+            """
+            UPDATE beats
+            SET is_hot_pick=?
+            WHERE id=?
+            AND producer_id=?
+            """,
+            (
+                hot,
+                beat_id,
+                producer["id"],
+            ),
+        )
+
+        c.commit()
+
+    finally:
+        c.close()
+
+    if not result.rowcount:
+        raise HTTPException(
+            404,
+            "Beat not found",
+        )
+
+    return RedirectResponse(
+        "/admin",
+        303,
+    )
+
+
+# ============================================================
+# SESSION SERVICES
+# ============================================================
+
+@app.post("/admin/service")
+def add_service(
+    r: Request,
+    title: str = Form(...),
+    description: str = Form(""),
+    duration_minutes: int = Form(...),
+    price: int = Form(...),
+    location: str = Form(""),
+    producer=Depends(
+        auth.require_producer
+    ),
 ):
     if (
-        not 15<=duration_minutes<=720
-        or price<1
+        not 15
+        <= duration_minutes
+        <= 720
+        or price < 1
     ):
         raise HTTPException(
             400,
-            'Invalid service details.'
+            "Invalid service details.",
         )
 
-    c=get_db()
+    c = get_db()
 
     try:
+
         c.execute(
-            '''
+            """
             INSERT INTO session_services(
                 producer_id,
                 title,
@@ -1420,15 +2282,15 @@ def add_service(
                 location
             )
             VALUES(?,?,?,?,?,?)
-            ''',
+            """,
             (
-                producer['id'],
+                producer["id"],
                 title.strip()[:100],
                 description.strip()[:1000],
                 duration_minutes,
                 price,
-                location.strip()[:200]
-            )
+                location.strip()[:200],
+            ),
         )
 
         c.commit()
@@ -1437,37 +2299,44 @@ def add_service(
         c.close()
 
     return RedirectResponse(
-        '/admin',
-        303
+        "/admin",
+        303,
     )
 
 
-@app.post('/admin/availability')
+# ============================================================
+# AVAILABILITY
+# ============================================================
+
+@app.post(
+    "/admin/availability"
+)
 def availability(
-    r:Request,
-    weekday:int=Form(...),
-    start_time:str=Form(...),
-    end_time:str=Form(...),
-    slot_minutes:int=Form(60),
+    r: Request,
+    weekday: int = Form(...),
+    start_time: str = Form(...),
+    end_time: str = Form(...),
+    slot_minutes: int = Form(60),
     producer=Depends(
         auth.require_producer
-    )
+    ),
 ):
     if not (
-        0<=weekday<=6
-        and 15<=slot_minutes<=240
-        and start_time<end_time
+        0 <= weekday <= 6
+        and 15 <= slot_minutes <= 240
+        and start_time < end_time
     ):
         raise HTTPException(
             400,
-            'Invalid availability.'
+            "Invalid availability.",
         )
 
-    c=get_db()
+    c = get_db()
 
     try:
+
         c.execute(
-            '''
+            """
             INSERT INTO producer_availability(
                 producer_id,
                 weekday,
@@ -1484,14 +2353,14 @@ def availability(
                 start_time=excluded.start_time,
                 end_time=excluded.end_time,
                 slot_minutes=excluded.slot_minutes
-            ''',
+            """,
             (
-                producer['id'],
+                producer["id"],
                 weekday,
                 start_time,
                 end_time,
-                slot_minutes
-            )
+                slot_minutes,
+            ),
         )
 
         c.commit()
@@ -1500,23 +2369,27 @@ def availability(
         c.close()
 
     return RedirectResponse(
-        '/admin',
-        303
+        "/admin",
+        303,
     )
 
+
+# ============================================================
+# PRODUCER WITHDRAWAL
+# ============================================================
 
 def request_producer_withdrawal(
     c,
-    pid,
+    producer_id,
     amount,
-    phone
+    phone,
 ):
     c.execute(
-        'BEGIN IMMEDIATE'
+        "BEGIN IMMEDIATE"
     )
 
-    r=c.execute(
-        '''
+    result = c.execute(
+        """
         UPDATE producer_wallets
         SET
             available_balance=
@@ -1526,23 +2399,23 @@ def request_producer_withdrawal(
             updated_at=CURRENT_TIMESTAMP
         WHERE producer_id=?
         AND available_balance>=?
-        ''',
+        """,
         (
             amount,
             amount,
-            pid,
-            amount
-        )
+            producer_id,
+            amount,
+        ),
     )
 
-    if not r.rowcount:
+    if not result.rowcount:
         raise HTTPException(
             400,
-            'Insufficient available balance.'
+            "Insufficient available balance.",
         )
 
-    wid=c.execute(
-        '''
+    withdrawal_id = c.execute(
+        """
         INSERT INTO withdrawals(
             producer_id,
             amount,
@@ -1550,61 +2423,71 @@ def request_producer_withdrawal(
             status
         )
         VALUES(?,?,?,'pending')
-        ''',
+        """,
         (
-            pid,
+            producer_id,
             amount,
-            phone
-        )
+            phone,
+        ),
     ).lastrowid
 
     c.commit()
 
-    return wid
+    return withdrawal_id
 
 
-@app.post('/admin/withdraw')
+@app.post("/admin/withdraw")
 def withdraw(
-    amount:int=Form(...),
+    amount: int = Form(...),
     producer=Depends(
         auth.require_producer
-    )
+    ),
 ):
-    if amount<10:
+    if amount < 10:
         raise HTTPException(
             400,
-            'Minimum withdrawal amount is 10.'
+            "Minimum withdrawal amount is 10.",
         )
 
-    c=get_db()
+    c = get_db()
 
     try:
-        p=c.execute(
-            '''
+
+        producer_record = c.execute(
+            """
             SELECT payout_phone
             FROM producers
             WHERE id=?
-            ''',
-            (producer['id'],)
+            """,
+            (
+                producer["id"],
+            ),
         ).fetchone()
 
         if (
-            not p
-            or not p['payout_phone']
+            not producer_record
+            or not producer_record[
+                "payout_phone"
+            ]
         ):
             raise HTTPException(
                 400,
-                'Add a payout number first.'
+                "Add a payout number first.",
             )
 
-        wid=request_producer_withdrawal(
-            c,
-            producer['id'],
-            amount,
-            p['payout_phone']
+        withdrawal_id = (
+            request_producer_withdrawal(
+                c,
+                producer["id"],
+                amount,
+                producer_record[
+                    "payout_phone"
+                ],
+            )
         )
 
     except Exception:
+
         try:
             c.rollback()
         except Exception:
@@ -1616,139 +2499,164 @@ def withdraw(
         c.close()
 
     try:
-        res=mpesa.initiate_producer_payout(
-            p['payout_phone'],
-            amount,
-            f'WD{wid}'
-        )
 
-    except Exception as e:
-        c=get_db()
-
-        c.execute(
-            'BEGIN IMMEDIATE'
-        )
-
-        c.execute(
-            '''
-            UPDATE withdrawals
-            SET
-                status='failed',
-                failure_reason=?
-            WHERE id=?
-            ''',
-            (
-                str(e)[:500],
-                wid
+        result = (
+            mpesa.initiate_producer_payout(
+                producer_record[
+                    "payout_phone"
+                ],
+                amount,
+                f"WD{withdrawal_id}",
             )
         )
 
-        c.execute(
-            '''
-            UPDATE producer_wallets
-            SET
-                available_balance=
-                    available_balance+?,
-                pending_withdrawal=
-                    pending_withdrawal-?,
-                updated_at=CURRENT_TIMESTAMP
-            WHERE producer_id=?
-            ''',
-            (
-                amount,
-                amount,
-                producer['id']
-            )
-        )
+    except Exception as exc:
 
-        c.commit()
-        c.close()
+        c = get_db()
+
+        try:
+
+            c.execute(
+                "BEGIN IMMEDIATE"
+            )
+
+            c.execute(
+                """
+                UPDATE withdrawals
+                SET
+                    status='failed',
+                    failure_reason=?
+                WHERE id=?
+                """,
+                (
+                    str(exc)[:500],
+                    withdrawal_id,
+                ),
+            )
+
+            c.execute(
+                """
+                UPDATE producer_wallets
+                SET
+                    available_balance=
+                        available_balance+?,
+                    pending_withdrawal=
+                        pending_withdrawal-?,
+                    updated_at=CURRENT_TIMESTAMP
+                WHERE producer_id=?
+                """,
+                (
+                    amount,
+                    amount,
+                    producer["id"],
+                ),
+            )
+
+            c.commit()
+
+        finally:
+            c.close()
 
         raise HTTPException(
             502,
-            str(e)
+            str(exc),
         )
 
-    if res.get('simulated'):
-        c=get_db()
+    if result.get(
+        "simulated"
+    ):
 
-        c.execute(
-            'BEGIN IMMEDIATE'
-        )
+        c = get_db()
 
-        c.execute(
-            '''
-            UPDATE withdrawals
-            SET
-                status='completed',
-                payout_reference=?,
-                completed_at=CURRENT_TIMESTAMP
-            WHERE id=?
-            ''',
-            (
-                res['reference'],
-                wid
+        try:
+
+            c.execute(
+                "BEGIN IMMEDIATE"
             )
-        )
 
-        c.execute(
-            '''
-            UPDATE producer_wallets
-            SET
-                pending_withdrawal=
-                    pending_withdrawal-?,
-                total_withdrawn=
-                    total_withdrawn+?,
-                updated_at=CURRENT_TIMESTAMP
-            WHERE producer_id=?
-            ''',
-            (
-                amount,
-                amount,
-                producer['id']
+            c.execute(
+                """
+                UPDATE withdrawals
+                SET
+                    status='completed',
+                    payout_reference=?,
+                    completed_at=CURRENT_TIMESTAMP
+                WHERE id=?
+                """,
+                (
+                    result["reference"],
+                    withdrawal_id,
+                ),
             )
-        )
 
-        c.commit()
-        c.close()
+            c.execute(
+                """
+                UPDATE producer_wallets
+                SET
+                    pending_withdrawal=
+                        pending_withdrawal-?,
+                    total_withdrawn=
+                        total_withdrawn+?,
+                    updated_at=CURRENT_TIMESTAMP
+                WHERE producer_id=?
+                """,
+                (
+                    amount,
+                    amount,
+                    producer["id"],
+                ),
+            )
+
+            c.commit()
+
+        finally:
+            c.close()
 
     return RedirectResponse(
-        '/admin',
-        303
+        "/admin",
+        303,
     )
 
+
+# ============================================================
+# PAYMENT SPLIT
+# ============================================================
 
 def split(
     c,
     kind,
-    id,
+    source_id,
     producer_id,
-    amount
+    amount,
 ):
     """
-    Safely split one completed transaction between
-    the producer and platform.
+    Split one completed transaction between
+    producer and platform.
 
-    The transaction is inserted into the platform
-    ledger only once, protecting against duplicate
-    callbacks/retries.
+    INSERT OR IGNORE prevents duplicate callback
+    processing from crediting wallets twice.
     """
-    amount=int(amount)
 
-    if amount<=0:
-        raise HTTPException(
-            400,
-            'Transaction amount must be greater than zero.'
-        )
-
-    fee=round(
-        amount*FEE_RATE/100
+    amount = int(
+        amount
     )
 
-    net=amount-fee
+    if amount <= 0:
+        raise HTTPException(
+            400,
+            "Transaction amount must be greater than zero.",
+        )
 
-    res=c.execute(
-        '''
+    fee = round(
+        amount * FEE_RATE / 100
+    )
+
+    net = (
+        amount - fee
+    )
+
+    result = c.execute(
+        """
         INSERT OR IGNORE INTO platform_ledger(
             source_type,
             source_id,
@@ -1757,26 +2665,26 @@ def split(
             producer_credit
         )
         VALUES(?,?,?,?,?)
-        ''',
+        """,
         (
             kind,
-            id,
+            source_id,
             amount,
             fee,
-            net
-        )
+            net,
+        ),
     )
 
-    if not res.rowcount:
+    if not result.rowcount:
         return None
 
     ensure_wallet(
         c,
-        producer_id
+        producer_id,
     )
 
     c.execute(
-        '''
+        """
         UPDATE producer_wallets
         SET
             available_balance=
@@ -1785,16 +2693,16 @@ def split(
                 total_earnings+?,
             updated_at=CURRENT_TIMESTAMP
         WHERE producer_id=?
-        ''',
+        """,
         (
             net,
             net,
-            producer_id
-        )
+            producer_id,
+        ),
     )
 
     c.execute(
-        '''
+        """
         UPDATE platform_wallet
         SET
             available_balance=
@@ -1803,63 +2711,79 @@ def split(
                 total_earnings+?,
             updated_at=CURRENT_TIMESTAMP
         WHERE id=1
-        ''',
+        """,
         (
             fee,
-            fee
-        )
+            fee,
+        ),
     )
 
-    return fee,net
+    return (
+        fee,
+        net,
+    )
 
 
-@app.post('/checkout/{beat_id}')
+# ============================================================
+# BEAT CHECKOUT
+# ============================================================
+
+@app.post(
+    "/checkout/{beat_id}"
+)
 def checkout(
-    beat_id:int,
-    phone:str=Form(...)
+    beat_id: int,
+    phone: str = Form(...),
 ):
     try:
-        phone=mpesa.normalize_phone(
+
+        phone = mpesa.normalize_phone(
             phone
         )
-    except ValueError as e:
+
+    except ValueError as exc:
         raise HTTPException(
             400,
-            str(e)
+            str(exc),
         )
 
-    c=get_db()
+    c = get_db()
 
     try:
-        b=c.execute(
-            '''
+
+        beat_record = c.execute(
+            """
             SELECT *
             FROM beats
             WHERE id=?
-            ''',
-            (beat_id,)
+            """,
+            (
+                beat_id,
+            ),
         ).fetchone()
 
-        if not b:
+        if not beat_record:
             raise HTTPException(
                 404,
-                'Beat not found'
+                "Beat not found",
             )
 
-        oid=c.execute(
-            '''
+        order_id = c.execute(
+            """
             INSERT INTO orders(
                 beat_id,
                 buyer_phone,
                 amount
             )
             VALUES(?,?,?)
-            ''',
+            """,
             (
                 beat_id,
                 phone,
-                b['price']
-            )
+                beat_record[
+                    "price"
+                ],
+            ),
         ).lastrowid
 
         c.commit()
@@ -1868,28 +2792,34 @@ def checkout(
         c.close()
 
     try:
-        res=mpesa.stk_push(
+
+        result = mpesa.stk_push(
             phone,
-            b['price'],
-            f'BEAT{beat_id}',
-            b['title']
+            beat_record[
+                "price"
+            ],
+            f"BEAT{beat_id}",
+            beat_record[
+                "title"
+            ],
         )
 
-    except Exception as e:
-        c=get_db()
+    except Exception as exc:
+
+        c = get_db()
 
         c.execute(
-            '''
+            """
             UPDATE orders
             SET
                 status='failed',
                 failure_reason=?
             WHERE id=?
-            ''',
+            """,
             (
-                str(e)[:500],
-                oid
-            )
+                str(exc)[:500],
+                order_id,
+            ),
         )
 
         c.commit()
@@ -1897,51 +2827,61 @@ def checkout(
 
         raise HTTPException(
             502,
-            str(e)
+            str(exc),
         )
 
-    c=get_db()
+    c = get_db()
 
     c.execute(
-        '''
+        """
         UPDATE orders
         SET checkout_request_id=?
         WHERE id=?
-        ''',
+        """,
         (
-            res['checkout_request_id'],
-            oid
-        )
+            result[
+                "checkout_request_id"
+            ],
+            order_id,
+        ),
     )
 
     c.commit()
     c.close()
 
-    if res.get('simulated'):
+    if result.get(
+        "simulated"
+    ):
+
         threading.Thread(
-            target=lambda:(
+            target=lambda: (
                 time.sleep(1),
-                complete_beat(oid)
+                complete_beat(
+                    order_id
+                ),
             ),
-            daemon=True
+            daemon=True,
         ).start()
 
     return {
-        'order_id':oid,
-        'status':'pending'
+        "order_id": order_id,
+        "status": "pending",
     }
 
 
-def complete_beat(oid):
-    c=get_db()
+def complete_beat(
+    order_id,
+):
+    c = get_db()
 
     try:
+
         c.execute(
-            'BEGIN IMMEDIATE'
+            "BEGIN IMMEDIATE"
         )
 
-        o=c.execute(
-            '''
+        order = c.execute(
+            """
             SELECT
                 o.*,
                 b.producer_id
@@ -1949,31 +2889,33 @@ def complete_beat(oid):
             JOIN beats b
                 ON b.id=o.beat_id
             WHERE o.id=?
-            ''',
-            (oid,)
+            """,
+            (
+                order_id,
+            ),
         ).fetchone()
 
         if (
-            not o
-            or o['status']
+            not order
+            or order["status"]
             not in (
-                'pending',
-                'completed'
+                "pending",
+                "completed",
             )
         ):
             c.rollback()
             return
 
-        x=split(
+        split_result = split(
             c,
-            'beat',
-            oid,
-            o['producer_id'],
-            o['amount']
+            "beat",
+            order_id,
+            order["producer_id"],
+            order["amount"],
         )
 
         c.execute(
-            '''
+            """
             UPDATE orders
             SET
                 status='completed',
@@ -1983,13 +2925,16 @@ def complete_beat(oid):
                         CURRENT_TIMESTAMP
                     )
             WHERE id=?
-            ''',
-            (oid,)
+            """,
+            (
+                order_id,
+            ),
         )
 
-        if x:
+        if split_result:
+
             c.execute(
-                '''
+                """
                 UPDATE orders
                 SET
                     platform_fee=?,
@@ -2002,14 +2947,16 @@ def complete_beat(oid):
                             ?
                         )
                 WHERE id=?
-                ''',
+                """,
                 (
-                    x[0],
-                    x[1],
+                    split_result[0],
+                    split_result[1],
                     FEE_RATE,
-                    secrets.token_urlsafe(32),
-                    oid
-                )
+                    secrets.token_urlsafe(
+                        32
+                    ),
+                    order_id,
+                ),
             )
 
         c.commit()
@@ -2022,89 +2969,108 @@ def complete_beat(oid):
         c.close()
 
 
-@app.get('/order/{oid}/status')
+@app.get(
+    "/order/{oid}/status"
+)
 def order_status(
-    oid:int
+    oid: int,
 ):
-    c=get_db()
+    c = get_db()
 
-    o=c.execute(
-        '''
+    order = c.execute(
+        """
         SELECT
             status,
             download_token
         FROM orders
         WHERE id=?
-        ''',
-        (oid,)
+        """,
+        (
+            oid,
+        ),
     ).fetchone()
 
     c.close()
 
-    if not o:
+    if not order:
         raise HTTPException(
             404,
-            'Order not found'
+            "Order not found",
         )
 
     return {
-        'status':o['status'],
-        'download_token':
-            o['download_token']
-            if o['status']=='completed'
-            else None
+        "status":
+            order[
+                "status"
+            ],
+
+        "download_token":
+            (
+                order[
+                    "download_token"
+                ]
+                if order[
+                    "status"
+                ]
+                == "completed"
+                else None
+            ),
     }
 
 
-# ----------------------------
+# ============================================================
 # BOOKING / SESSION SYSTEM
-# ----------------------------
+# ============================================================
 
-@app.get('/sessions/{service_id}/book')
+@app.get(
+    "/sessions/{service_id}/book"
+)
 def book_page(
-    r:Request,
-    service_id:int
+    r: Request,
+    service_id: int,
 ):
-    c=get_db()
+    c = get_db()
 
-    s=c.execute(
-        '''
+    service = c.execute(
+        """
         SELECT
             s.*,
-            p.name producer_name,
-            p.slug producer_slug
+            p.name AS producer_name,
+            p.slug AS producer_slug
         FROM session_services s
         JOIN producers p
             ON p.id=s.producer_id
         WHERE s.id=?
         AND s.active=1
-        ''',
-        (service_id,)
+        """,
+        (
+            service_id,
+        ),
     ).fetchone()
 
     c.close()
 
-    if not s:
+    if not service:
         raise HTTPException(
             404,
-            'Service not found'
+            "Service not found",
         )
 
     return render(
-        'book_session.html',
+        "book_session.html",
         r,
-        service=s
+        service=service,
     )
 
 
 def slot_free(
     c,
-    pid,
+    producer_id,
     start,
     end,
-    ignore=None
+    ignore=None,
 ):
-    q='''
+    query = """
         SELECT 1
         FROM session_bookings
         WHERE producer_id=?
@@ -2119,146 +3085,184 @@ def slot_free(
         )
         AND start_at<?
         AND end_at>?
-    '''
+    """
 
-    args=[
-        pid,
+    args = [
+        producer_id,
         iso(now()),
         iso(end),
-        iso(start)
+        iso(start),
     ]
 
     if ignore:
-        q+=' AND id<>?'
-        args.append(ignore)
+        query += " AND id<>?"
+        args.append(
+            ignore
+        )
 
     return not c.execute(
-        q,
-        args
+        query,
+        args,
     ).fetchone()
 
 
-@app.get('/api/services/{sid}/slots')
+@app.get(
+    "/api/services/{sid}/slots"
+)
 def slots(
-    sid:int,
-    day:str
+    sid: int,
+    day: str,
 ):
-    d=date.fromisoformat(day)
-    c=get_db()
+    selected_day = date.fromisoformat(
+        day
+    )
 
-    s=c.execute(
-        '''
+    c = get_db()
+
+    service = c.execute(
+        """
         SELECT *
         FROM session_services
         WHERE id=?
         AND active=1
-        ''',
-        (sid,)
+        """,
+        (
+            sid,
+        ),
     ).fetchone()
 
-    if not s:
+    if not service:
         c.close()
+
         raise HTTPException(
             404,
-            'Service not found'
+            "Service not found",
         )
 
-    a=c.execute(
-        '''
+    availability_record = c.execute(
+        """
         SELECT *
         FROM producer_availability
         WHERE producer_id=?
         AND weekday=?
-        ''',
+        """,
         (
-            s['producer_id'],
-            d.weekday()
-        )
+            service[
+                "producer_id"
+            ],
+            selected_day.weekday(),
+        ),
     ).fetchone()
 
-    if not a:
+    if not availability_record:
         c.close()
         return []
 
-    cur=datetime.combine(
-        d,
+    current = datetime.combine(
+        selected_day,
         dtime.fromisoformat(
-            a['start_time']
+            availability_record[
+                "start_time"
+            ]
         ),
-        tzinfo=timezone.utc
+        tzinfo=timezone.utc,
     )
 
-    endday=datetime.combine(
-        d,
+    end_of_day = datetime.combine(
+        selected_day,
         dtime.fromisoformat(
-            a['end_time']
+            availability_record[
+                "end_time"
+            ]
         ),
-        tzinfo=timezone.utc
+        tzinfo=timezone.utc,
     )
 
-    dur=timedelta(
-        minutes=s['duration_minutes']
+    duration = timedelta(
+        minutes=service[
+            "duration_minutes"
+        ]
     )
 
-    out=[]
+    output = []
 
-    while cur+dur<=endday:
+    while (
+        current + duration
+        <= end_of_day
+    ):
+
         if (
-            cur>now()
+            current > now()
             and slot_free(
                 c,
-                s['producer_id'],
-                cur,
-                cur+dur
+                service[
+                    "producer_id"
+                ],
+                current,
+                current + duration,
             )
         ):
-            out.append(
+
+            output.append(
                 {
-                    'start_at':iso(cur),
-                    'end_at':iso(cur+dur)
+                    "start_at":
+                        iso(current),
+
+                    "end_at":
+                        iso(
+                            current
+                            + duration
+                        ),
                 }
             )
 
-        cur+=timedelta(
-            minutes=a['slot_minutes']
+        current += timedelta(
+            minutes=availability_record[
+                "slot_minutes"
+            ]
         )
 
     c.close()
 
-    return out
+    return output
 
 
-@app.post('/sessions/{sid}/book')
+@app.post(
+    "/sessions/{sid}/book"
+)
 def create_booking(
-    sid:int,
-    client_name:str=Form(...),
-    client_phone:str=Form(...),
-    client_email:str=Form(''),
-    start_at:str=Form(...)
+    sid: int,
+    client_name: str = Form(...),
+    client_phone: str = Form(...),
+    client_email: str = Form(""),
+    start_at: str = Form(...),
 ):
     try:
-        phone=mpesa.normalize_phone(
+
+        phone = mpesa.normalize_phone(
             client_phone
         )
-    except ValueError as e:
+
+    except ValueError as exc:
         raise HTTPException(
             400,
-            str(e)
+            str(exc),
         )
 
-    start=parse_iso(
+    start = parse_iso(
         start_at
     )
 
-    c=get_db()
+    c = get_db()
 
     try:
+
         c.execute(
-            'BEGIN IMMEDIATE'
+            "BEGIN IMMEDIATE"
         )
 
         c.execute(
-            '''
+            """
             UPDATE session_bookings
             SET
                 status='cancelled',
@@ -2271,49 +3275,55 @@ def create_booking(
             AND status='pending'
             AND hold_expires_at IS NOT NULL
             AND hold_expires_at<=?
-            ''',
+            """,
             (
                 sid,
-                iso(now())
-            )
+                iso(now()),
+            ),
         )
 
-        s=c.execute(
-            '''
+        service = c.execute(
+            """
             SELECT *
             FROM session_services
             WHERE id=?
             AND active=1
-            ''',
-            (sid,)
+            """,
+            (
+                sid,
+            ),
         ).fetchone()
 
-        if not s:
+        if not service:
             raise HTTPException(
                 404,
-                'Service not found'
+                "Service not found",
             )
 
-        end=start+timedelta(
-            minutes=s['duration_minutes']
+        end = start + timedelta(
+            minutes=service[
+                "duration_minutes"
+            ]
         )
 
         if (
-            start<=now()
+            start <= now()
             or not slot_free(
                 c,
-                s['producer_id'],
+                service[
+                    "producer_id"
+                ],
                 start,
-                end
+                end,
             )
         ):
             raise HTTPException(
                 409,
-                'That time is no longer available.'
+                "That time is no longer available.",
             )
 
-        bid=c.execute(
-            '''
+        booking_id = c.execute(
+            """
             INSERT INTO session_bookings(
                 producer_id,
                 service_id,
@@ -2327,58 +3337,66 @@ def create_booking(
                 hold_expires_at
             )
             VALUES(?,?,?,?,?,?,?,?,?,?)
-            ''',
+            """,
             (
-                s['producer_id'],
+                service[
+                    "producer_id"
+                ],
                 sid,
                 client_name.strip()[:100],
                 phone,
                 client_email.strip()[:200],
                 iso(start),
                 iso(end),
-                s['price'],
-                'pending',
+                service["price"],
+                "pending",
                 iso(
-                    now()+timedelta(
+                    now()
+                    + timedelta(
                         minutes=10
                     )
-                )
-            )
+                ),
+            ),
         ).lastrowid
 
         c.commit()
 
     except sqlite3.IntegrityError:
+
         c.rollback()
 
         raise HTTPException(
             409,
-            'That time is no longer available.'
+            "That time is no longer available.",
         )
 
     finally:
         c.close()
 
     try:
-        res=mpesa.stk_push(
+
+        result = mpesa.stk_push(
             phone,
-            s['price'],
-            f'SESSION{bid}',
-            s['title']
+            service["price"],
+            f"SESSION{booking_id}",
+            service["title"],
         )
 
-    except Exception as e:
-        c=get_db()
+    except Exception as exc:
+
+        c = get_db()
 
         c.execute(
-            '''
+            """
             UPDATE session_bookings
             SET
                 status='cancelled',
                 cancelled_at=CURRENT_TIMESTAMP
             WHERE id=?
-            ''',
-            (bid,)
+            """,
+            (
+                booking_id,
+            ),
         )
 
         c.commit()
@@ -2386,75 +3404,95 @@ def create_booking(
 
         raise HTTPException(
             502,
-            str(e)
+            str(exc),
         )
 
-    c=get_db()
+    c = get_db()
 
     c.execute(
-        '''
+        """
         UPDATE session_bookings
         SET checkout_request_id=?
         WHERE id=?
-        ''',
+        """,
         (
-            res['checkout_request_id'],
-            bid
-        )
+            result[
+                "checkout_request_id"
+            ],
+            booking_id,
+        ),
     )
 
     c.commit()
     c.close()
 
-    if res.get('simulated'):
+    if result.get(
+        "simulated"
+    ):
+
         threading.Thread(
-            target=lambda:(
+            target=lambda: (
                 time.sleep(1),
-                complete_session(bid)
+                complete_session(
+                    booking_id
+                ),
             ),
-            daemon=True
+            daemon=True,
         ).start()
 
     return {
-        'booking_id':bid,
-        'status':'pending'
+        "booking_id":
+            booking_id,
+
+        "status":
+            "pending",
     }
 
 
-def complete_session(bid):
-    c=get_db()
+def complete_session(
+    booking_id,
+):
+    c = get_db()
 
     try:
+
         c.execute(
-            'BEGIN IMMEDIATE'
+            "BEGIN IMMEDIATE"
         )
 
-        b=c.execute(
-            '''
+        booking = c.execute(
+            """
             SELECT *
             FROM session_bookings
             WHERE id=?
-            ''',
-            (bid,)
+            """,
+            (
+                booking_id,
+            ),
         ).fetchone()
 
         if (
-            not b
-            or b['status']!='pending'
+            not booking
+            or booking["status"]
+            != "pending"
         ):
             c.rollback()
             return
 
-        x=split(
+        split_result = split(
             c,
-            'session',
-            bid,
-            b['producer_id'],
-            b['amount']
+            "session",
+            booking_id,
+            booking[
+                "producer_id"
+            ],
+            booking[
+                "amount"
+            ],
         )
 
         c.execute(
-            '''
+            """
             UPDATE session_bookings
             SET
                 status='paid',
@@ -2464,12 +3502,12 @@ def complete_session(bid):
                 producer_payout=?,
                 split_applied_at=CURRENT_TIMESTAMP
             WHERE id=?
-            ''',
+            """,
             (
-                x[0],
-                x[1],
-                bid
-            )
+                split_result[0],
+                split_result[1],
+                booking_id,
+            ),
         )
 
         c.commit()
@@ -2482,19 +3520,21 @@ def complete_session(bid):
         c.close()
 
 
-@app.get('/booking/{bid}')
+@app.get(
+    "/booking/{bid}"
+)
 def booking_page(
-    r:Request,
-    bid:int
+    r: Request,
+    bid: int,
 ):
-    c=get_db()
+    c = get_db()
 
-    b=c.execute(
-        '''
+    booking = c.execute(
+        """
         SELECT
             b.*,
-            s.title service_title,
-            p.name producer_name,
+            s.title AS service_title,
+            p.name AS producer_name,
             p.slug
         FROM session_bookings b
         JOIN session_services s
@@ -2502,198 +3542,219 @@ def booking_page(
         JOIN producers p
             ON p.id=b.producer_id
         WHERE b.id=?
-        ''',
-        (bid,)
+        """,
+        (
+            bid,
+        ),
     ).fetchone()
 
-    msgs=c.execute(
-        '''
+    messages = c.execute(
+        """
         SELECT *
         FROM booking_messages
         WHERE booking_id=?
         ORDER BY id
-        ''',
-        (bid,)
+        """,
+        (
+            bid,
+        ),
     ).fetchall()
 
-    props=c.execute(
-        '''
+    proposals = c.execute(
+        """
         SELECT *
         FROM booking_proposals
         WHERE booking_id=?
         AND confirmed_at IS NULL
         AND declined_at IS NULL
         ORDER BY id DESC
-        ''',
-        (bid,)
+        """,
+        (
+            bid,
+        ),
     ).fetchall()
 
     c.close()
 
-    if not b:
+    if not booking:
         raise HTTPException(
             404,
-            'Booking not found'
+            "Booking not found",
         )
 
     return render(
-        'booking.html',
+        "booking.html",
         r,
-        booking=b,
-        messages=msgs,
-        proposals=props
+        booking=booking,
+        messages=messages,
+        proposals=proposals,
     )
 
 
 def booking_actor(
     r,
-    b
+    booking,
 ):
-    p=auth.current_producer(r)
+    producer = auth.current_producer(
+        r
+    )
 
     if (
-        p
-        and b
-        and p['id']==b['producer_id']
+        producer
+        and booking
+        and producer["id"]
+        == booking[
+            "producer_id"
+        ]
     ):
-        return 'producer'
+        return "producer"
 
-    return 'client'
+    return "client"
 
 
-@app.post('/booking/{bid}/message')
+@app.post(
+    "/booking/{bid}/message"
+)
 def message(
-    r:Request,
-    bid:int,
-    body:str=Form(...)
+    r: Request,
+    bid: int,
+    body: str = Form(...),
 ):
-    c=get_db()
+    c = get_db()
 
-    b=c.execute(
-        '''
+    booking = c.execute(
+        """
         SELECT *
         FROM session_bookings
         WHERE id=?
-        ''',
-        (bid,)
+        """,
+        (
+            bid,
+        ),
     ).fetchone()
 
-    if not b:
+    if not booking:
         c.close()
 
         raise HTTPException(
             404,
-            'Booking not found'
+            "Booking not found",
         )
 
-    body=body.strip()
+    body = body.strip()
 
     if not body:
         c.close()
 
         raise HTTPException(
             400,
-            'Message cannot be empty.'
+            "Message cannot be empty.",
         )
 
-    role=booking_actor(
+    role = booking_actor(
         r,
-        b
+        booking,
     )
 
     c.execute(
-        '''
+        """
         INSERT INTO booking_messages(
             booking_id,
             sender_role,
             body
         )
         VALUES(?,?,?)
-        ''',
+        """,
         (
             bid,
             role,
-            body[:2000]
-        )
+            body[:2000],
+        ),
     )
 
     c.commit()
     c.close()
 
     return RedirectResponse(
-        '/booking/'+str(bid),
-        303
+        "/booking/"
+        + str(bid),
+        303,
     )
 
 
-@app.post('/booking/{bid}/propose')
+@app.post(
+    "/booking/{bid}/propose"
+)
 def propose(
-    r:Request,
-    bid:int,
-    start_at:str=Form(...)
+    r: Request,
+    bid: int,
+    start_at: str = Form(...),
 ):
-    c=get_db()
+    c = get_db()
 
-    b=c.execute(
-        '''
+    booking = c.execute(
+        """
         SELECT *
         FROM session_bookings
         WHERE id=?
-        ''',
-        (bid,)
+        """,
+        (
+            bid,
+        ),
     ).fetchone()
 
-    if not b:
+    if not booking:
         c.close()
 
         raise HTTPException(
             404,
-            'Booking not found'
+            "Booking not found",
         )
 
-    role=booking_actor(
+    role = booking_actor(
         r,
-        b
+        booking,
     )
 
-    st=parse_iso(
+    start = parse_iso(
         start_at
     )
 
-    if st<=now():
+    if start <= now():
         c.close()
 
         raise HTTPException(
             400,
-            'Proposed time must be in the future.'
+            "Proposed time must be in the future.",
         )
 
-    en=st+(
+    end = start + (
         parse_iso(
-            b['end_at']
+            booking["end_at"]
         )
-        -
-        parse_iso(
-            b['start_at']
+        - parse_iso(
+            booking["start_at"]
         )
     )
 
     if not slot_free(
         c,
-        b['producer_id'],
-        st,
-        en,
-        ignore=bid
+        booking[
+            "producer_id"
+        ],
+        start,
+        end,
+        ignore=bid,
     ):
         c.close()
 
         raise HTTPException(
             409,
-            'That proposed time is unavailable.'
+            "That proposed time is unavailable.",
         )
 
     c.execute(
-        '''
+        """
         INSERT INTO booking_proposals(
             booking_id,
             proposed_start_at,
@@ -2701,100 +3762,117 @@ def propose(
             proposed_by
         )
         VALUES(?,?,?,?)
-        ''',
+        """,
         (
             bid,
-            iso(st),
-            iso(en),
-            role
-        )
+            iso(start),
+            iso(end),
+            role,
+        ),
     )
 
     c.commit()
     c.close()
 
     return RedirectResponse(
-        '/booking/'+str(bid),
-        303
+        "/booking/"
+        + str(bid),
+        303,
     )
 
 
-@app.post('/booking/{bid}/proposal/{pid}/confirm')
+@app.post(
+    "/booking/{bid}/proposal/{pid}/confirm"
+)
 def confirm_proposal(
-    r:Request,
-    bid:int,
-    pid:int
+    r: Request,
+    bid: int,
+    pid: int,
 ):
-    c=get_db()
+    c = get_db()
 
     try:
+
         c.execute(
-            'BEGIN IMMEDIATE'
+            "BEGIN IMMEDIATE"
         )
 
-        b=c.execute(
-            '''
+        booking = c.execute(
+            """
             SELECT *
             FROM session_bookings
             WHERE id=?
-            ''',
-            (bid,)
+            """,
+            (
+                bid,
+            ),
         ).fetchone()
 
-        pr=c.execute(
-            '''
+        proposal = c.execute(
+            """
             SELECT *
             FROM booking_proposals
             WHERE id=?
             AND booking_id=?
             AND confirmed_at IS NULL
             AND declined_at IS NULL
-            ''',
+            """,
             (
                 pid,
-                bid
-            )
+                bid,
+            ),
         ).fetchone()
 
-        if not b or not pr:
+        if not booking or not proposal:
             raise HTTPException(
                 404,
-                'Proposal not found'
+                "Proposal not found",
             )
 
-        actor=booking_actor(
+        actor = booking_actor(
             r,
-            b
+            booking,
         )
 
-        if actor==pr['proposed_by']:
+        if (
+            actor
+            == proposal[
+                "proposed_by"
+            ]
+        ):
             raise HTTPException(
                 403,
-                'The other party must confirm this proposal.'
+                "The other party must confirm this proposal.",
             )
 
-        st=parse_iso(
-            pr['proposed_start_at']
+        start = parse_iso(
+            proposal[
+                "proposed_start_at"
+            ]
         )
 
-        en=parse_iso(
-            pr['proposed_end_at']
+        end = parse_iso(
+            proposal[
+                "proposed_end_at"
+            ]
         )
 
         if not slot_free(
             c,
-            b['producer_id'],
-            st,
-            en,
-            ignore=bid
+            booking[
+                "producer_id"
+            ],
+            start,
+            end,
+            ignore=bid,
         ):
             raise HTTPException(
                 409,
-                'That proposed time is no longer available.'
+                "That proposed time is no longer available.",
             )
 
         c.execute(
-            '''
+            """
             UPDATE session_bookings
             SET
                 start_at=?,
@@ -2805,26 +3883,29 @@ def confirm_proposal(
                     ELSE status
                 END
             WHERE id=?
-            ''',
+            """,
             (
-                iso(st),
-                iso(en),
-                bid
-            )
+                iso(start),
+                iso(end),
+                bid,
+            ),
         )
 
         c.execute(
-            '''
+            """
             UPDATE booking_proposals
             SET confirmed_at=CURRENT_TIMESTAMP
             WHERE id=?
-            ''',
-            (pid,)
+            """,
+            (
+                pid,
+            ),
         )
 
         c.commit()
 
     except Exception:
+
         try:
             c.rollback()
         except Exception:
@@ -2836,91 +3917,107 @@ def confirm_proposal(
         c.close()
 
     return RedirectResponse(
-        '/booking/'+str(bid),
-        303
+        "/booking/"
+        + str(bid),
+        303,
     )
 
 
-@app.get('/booking/{bid}/status')
+@app.get(
+    "/booking/{bid}/status"
+)
 def booking_status(
-    bid:int
+    bid: int,
 ):
-    c=get_db()
+    c = get_db()
 
-    b=c.execute(
-        '''
+    booking = c.execute(
+        """
         SELECT status
         FROM session_bookings
         WHERE id=?
-        ''',
-        (bid,)
+        """,
+        (
+            bid,
+        ),
     ).fetchone()
 
     c.close()
 
-    if not b:
+    if not booking:
         raise HTTPException(
             404,
-            'Booking not found'
+            "Booking not found",
         )
 
     return {
-        'status':b['status']
+        "status":
+            booking[
+                "status"
+            ]
     }
 
 
+# ============================================================
+# SUPER ADMIN HELPERS
+# ============================================================
+
 def admin_phone():
-    raw=os.getenv(
-        'SUPER_ADMIN_PAYOUT_PHONE',
-        ''
+    raw = os.getenv(
+        "SUPER_ADMIN_PAYOUT_PHONE",
+        "",
     ).strip()
 
     if not raw:
-        return ''
+        return ""
 
     try:
         return mpesa.normalize_phone(
             raw
         )
     except ValueError:
-        return ''
+        return ""
 
 
-# ----------------------------
-# SUPER ADMIN AUTHENTICATION
-# ----------------------------
+# ============================================================
+# SUPER ADMIN LOGIN
+# ============================================================
 
-@app.get('/super-admin/login')
+@app.get(
+    "/super-admin/login"
+)
 def super_login_page(
-    r:Request
+    r: Request,
 ):
     if auth.is_super_admin(r):
         return RedirectResponse(
-            '/super-admin',
-            303
+            "/super-admin",
+            303,
         )
 
     return render_no_store(
-        'super_admin_login.html',
+        "super_admin_login.html",
         r,
-        error=None
+        error=None,
     )
 
 
-@app.post('/super-admin/login')
+@app.post(
+    "/super-admin/login"
+)
 def super_login(
-    r:Request,
-    username:str=Form(...),
-    password:str=Form(...)
+    r: Request,
+    username: str = Form(...),
+    password: str = Form(...),
 ):
-    configured_username=os.getenv(
-        'SUPER_ADMIN_USERNAME',
-        ''
+    configured_username = os.getenv(
+        "SUPER_ADMIN_USERNAME",
+        "",
     ).strip()
 
-    configured_password=os.getenv(
-        'SUPER_ADMIN_PASSWORD',
-        ''
+    configured_password = os.getenv(
+        "SUPER_ADMIN_PASSWORD",
+        "",
     )
 
     if (
@@ -2928,108 +4025,150 @@ def super_login(
         or not configured_password
     ):
         return render_no_store(
-            'super_admin_login.html',
+            "super_admin_login.html",
             r,
             error=(
-                'Super Admin credentials '
-                'are not configured on the server.'
-            )
+                "Super Admin credentials "
+                "are not configured on the server."
+            ),
         )
 
-    good=(
+    valid = (
         secrets.compare_digest(
             username.strip(),
-            configured_username
+            configured_username,
         )
         and
         secrets.compare_digest(
             password,
-            configured_password
+            configured_password,
         )
     )
 
-    if not good:
+    if not valid:
         return render_no_store(
-            'super_admin_login.html',
+            "super_admin_login.html",
             r,
-            error='Invalid credentials.'
+            error="Invalid credentials.",
         )
 
-    # Completely replace any existing producer/client
-    # session before establishing Super Admin access.
     r.session.clear()
 
-    r.session['super_admin']=True
-    r.session['role']='super_admin'
-    r.session['super_admin_login_at']=(
-        datetime.now(
-            timezone.utc
-        ).isoformat()
-    )
+    r.session[
+        "super_admin"
+    ] = True
+
+    r.session[
+        "role"
+    ] = "super_admin"
+
+    r.session[
+        "super_admin_login_at"
+    ] = datetime.now(
+        timezone.utc
+    ).isoformat()
 
     return RedirectResponse(
-        '/super-admin',
-        303
+        "/super-admin",
+        303,
     )
 
 
-@app.post('/super-admin/logout')
+# ============================================================
+# SUPER ADMIN LOGOUT
+# ============================================================
+
+@app.api_route(
+    "/super-admin/logout",
+    methods=["GET", "POST"],
+)
 def super_logout(
-    r:Request
+    r: Request,
 ):
     r.session.clear()
 
-    return RedirectResponse(
-        '/',
-        303
+    response = RedirectResponse(
+        "/",
+        303,
     )
 
+    response.delete_cookie(
+        "session",
+        path="/",
+    )
 
-# ----------------------------
+    response.delete_cookie(
+        "beathub_last_email",
+        path="/",
+    )
+
+    response.headers[
+        "Cache-Control"
+    ] = (
+        "no-store, no-cache, "
+        "must-revalidate, max-age=0, private"
+    )
+
+    response.headers[
+        "Pragma"
+    ] = "no-cache"
+
+    response.headers[
+        "Expires"
+    ] = "0"
+
+    return response
+
+
+# ============================================================
 # SUPER ADMIN DASHBOARD
-# ----------------------------
+# ============================================================
 
-@app.get('/super-admin')
+@app.get(
+    "/super-admin"
+)
 def super_admin(
-    r:Request
+    r: Request,
 ):
     auth.require_super_admin(
         r
     )
 
-    c=get_db()
+    c = get_db()
 
     try:
-        wallet=c.execute(
-            '''
+
+        wallet = c.execute(
+            """
             SELECT *
             FROM platform_wallet
             WHERE id=1
-            '''
+            """
         ).fetchone()
 
         if not wallet:
+
             c.execute(
-                '''
+                """
                 INSERT OR IGNORE INTO platform_wallet(
                     id
                 )
                 VALUES(1)
-                '''
+                """
             )
 
             c.commit()
 
-            wallet=c.execute(
-                '''
+            wallet = c.execute(
+                """
                 SELECT *
                 FROM platform_wallet
                 WHERE id=1
-                '''
+                """
             ).fetchone()
 
-        summary=c.execute(
-            '''
+        summary = c.execute(
+            """
             SELECT
                 COALESCE(
                     SUM(gross_amount),
@@ -3049,11 +4188,11 @@ def super_admin(
                 COUNT(*) AS completed_transactions
 
             FROM platform_ledger
-            '''
+            """
         ).fetchone()
 
-        beat_summary=c.execute(
-            '''
+        beat_summary = c.execute(
+            """
             SELECT
                 COALESCE(
                     SUM(gross_amount),
@@ -3069,11 +4208,11 @@ def super_admin(
 
             FROM platform_ledger
             WHERE source_type='beat'
-            '''
+            """
         ).fetchone()
 
-        session_summary=c.execute(
-            '''
+        session_summary = c.execute(
+            """
             SELECT
                 COALESCE(
                     SUM(gross_amount),
@@ -3089,11 +4228,11 @@ def super_admin(
 
             FROM platform_ledger
             WHERE source_type='session'
-            '''
+            """
         ).fetchone()
 
-        recent=c.execute(
-            '''
+        recent = c.execute(
+            """
             SELECT
                 pl.*,
 
@@ -3130,139 +4269,177 @@ def super_admin(
 
             ORDER BY pl.created_at DESC
             LIMIT 100
-            '''
+            """
         ).fetchall()
 
-        withdrawals=c.execute(
-            '''
+        withdrawals = c.execute(
+            """
             SELECT *
             FROM platform_withdrawals
             ORDER BY requested_at DESC
             LIMIT 50
-            '''
+            """
         ).fetchall()
 
-        pending_count=c.execute(
-            '''
+        pending_count = c.execute(
+            """
             SELECT COUNT(*) AS count
             FROM platform_withdrawals
             WHERE status='pending'
-            '''
-        ).fetchone()['count']
+            """
+        ).fetchone()["count"]
 
-        totals={
-            'gross_sales':
-                summary['gross_sales'],
+        totals = {
+            "gross_sales":
+                summary[
+                    "gross_sales"
+                ],
 
-            'platform_earnings':
-                summary['platform_earnings'],
+            "platform_earnings":
+                summary[
+                    "platform_earnings"
+                ],
 
-            'producer_earnings':
-                summary['producer_earnings'],
+            "producer_earnings":
+                summary[
+                    "producer_earnings"
+                ],
 
-            'completed_transactions':
-                summary['completed_transactions'],
+            "completed_transactions":
+                summary[
+                    "completed_transactions"
+                ],
 
-            'available_balance':
-                wallet['available_balance'],
+            "available_balance":
+                wallet[
+                    "available_balance"
+                ],
 
-            'pending_withdrawal':
-                wallet['pending_withdrawal'],
+            "pending_withdrawal":
+                wallet[
+                    "pending_withdrawal"
+                ],
 
-            'total_withdrawn':
-                wallet['total_withdrawn'],
+            "total_withdrawn":
+                wallet[
+                    "total_withdrawn"
+                ],
 
-            'pending_withdrawals_count':
+            "pending_withdrawals_count":
                 pending_count,
 
-            'beat_gross':
-                beat_summary['gross'],
+            "beat_gross":
+                beat_summary[
+                    "gross"
+                ],
 
-            'beat_fee':
-                beat_summary['fee'],
+            "beat_fee":
+                beat_summary[
+                    "fee"
+                ],
 
-            'beat_count':
-                beat_summary['count'],
+            "beat_count":
+                beat_summary[
+                    "count"
+                ],
 
-            'session_gross':
-                session_summary['gross'],
+            "session_gross":
+                session_summary[
+                    "gross"
+                ],
 
-            'session_fee':
-                session_summary['fee'],
+            "session_fee":
+                session_summary[
+                    "fee"
+                ],
 
-            'session_count':
-                session_summary['count'],
+            "session_count":
+                session_summary[
+                    "count"
+                ],
 
-            'commission_rate':
-                FEE_RATE
+            "commission_rate":
+                FEE_RATE,
         }
 
     finally:
         c.close()
 
     return render(
-        'super_admin.html',
+        "super_admin.html",
         r,
         wallet=wallet,
         totals=totals,
         recent=recent,
         withdrawals=withdrawals,
-        payout_phone=admin_phone()
+        payout_phone=admin_phone(),
     )
 
 
-@app.post('/super-admin/withdraw')
+# ============================================================
+# SUPER ADMIN WITHDRAWAL
+# ============================================================
+
+@app.post(
+    "/super-admin/withdraw"
+)
 def super_withdraw(
-    r:Request,
-    amount:int=Form(...)
+    r: Request,
+    amount: int = Form(...),
 ):
     auth.require_super_admin(
         r
     )
 
-    if amount<10:
+    if amount < 10:
         raise HTTPException(
             400,
-            'Minimum withdrawal amount is 10.'
+            "Minimum withdrawal amount is 10.",
         )
 
-    phone=admin_phone()
+    phone = admin_phone()
 
     if not phone:
         raise HTTPException(
             400,
-            'Configure a valid Super Admin payout number first.'
+            "Configure a valid Super Admin payout number first.",
         )
 
-    c=get_db()
+    c = get_db()
 
     try:
+
         c.execute(
-            'BEGIN IMMEDIATE'
+            "BEGIN IMMEDIATE"
         )
 
-        row=c.execute(
-            '''
+        wallet = c.execute(
+            """
             SELECT available_balance
             FROM platform_wallet
             WHERE id=1
-            '''
+            """
         ).fetchone()
 
-        if not row:
+        if not wallet:
             raise HTTPException(
                 500,
-                'Platform wallet is not available.'
+                "Platform wallet is not available.",
             )
 
-        if row['available_balance']<amount:
+        if (
+            wallet[
+                "available_balance"
+            ]
+            < amount
+        ):
             raise HTTPException(
                 400,
-                'Insufficient available platform balance.'
+                "Insufficient available platform balance.",
             )
 
-        wid=c.execute(
-            '''
+        withdrawal_id = c.execute(
+            """
             INSERT INTO platform_withdrawals(
                 amount,
                 phone,
@@ -3273,36 +4450,34 @@ def super_withdraw(
                 ?,
                 'pending'
             )
-            ''',
+            """,
             (
                 amount,
-                phone
-            )
+                phone,
+            ),
         ).lastrowid
 
         c.execute(
-            '''
+            """
             UPDATE platform_wallet
             SET
                 available_balance=
                     available_balance-?,
-
                 pending_withdrawal=
                     pending_withdrawal+?,
-
                 updated_at=CURRENT_TIMESTAMP
-
             WHERE id=1
-            ''',
+            """,
             (
                 amount,
-                amount
-            )
+                amount,
+            ),
         )
 
         c.commit()
 
     except Exception:
+
         try:
             c.rollback()
         except Exception:
@@ -3314,52 +4489,54 @@ def super_withdraw(
         c.close()
 
     try:
-        res=mpesa.initiate_platform_payout(
-            phone,
-            amount,
-            f'ADMINWD{wid}'
+
+        result = (
+            mpesa.initiate_platform_payout(
+                phone,
+                amount,
+                f"ADMINWD{withdrawal_id}",
+            )
         )
 
-    except Exception as e:
-        c=get_db()
+    except Exception as exc:
+
+        c = get_db()
 
         try:
+
             c.execute(
-                'BEGIN IMMEDIATE'
+                "BEGIN IMMEDIATE"
             )
 
             c.execute(
-                '''
+                """
                 UPDATE platform_withdrawals
                 SET
                     status='failed',
                     failure_reason=?
                 WHERE id=?
-                ''',
+                """,
                 (
-                    str(e)[:500],
-                    wid
-                )
+                    str(exc)[:500],
+                    withdrawal_id,
+                ),
             )
 
             c.execute(
-                '''
+                """
                 UPDATE platform_wallet
                 SET
                     available_balance=
                         available_balance+?,
-
                     pending_withdrawal=
                         pending_withdrawal-?,
-
                     updated_at=CURRENT_TIMESTAMP
-
                 WHERE id=1
-                ''',
+                """,
                 (
                     amount,
-                    amount
-                )
+                    amount,
+                ),
             )
 
             c.commit()
@@ -3369,53 +4546,53 @@ def super_withdraw(
 
         raise HTTPException(
             502,
-            'The payout provider could not process the withdrawal.'
+            "The payout provider could not process the withdrawal.",
         )
 
-    # Mock mode completes immediately.
-    # Live mode remains pending until the
-    # real payout provider confirms the payout.
-    if res.get('simulated'):
-        c=get_db()
+    if result.get(
+        "simulated"
+    ):
+
+        c = get_db()
 
         try:
+
             c.execute(
-                'BEGIN IMMEDIATE'
+                "BEGIN IMMEDIATE"
             )
 
             c.execute(
-                '''
+                """
                 UPDATE platform_withdrawals
                 SET
                     status='completed',
                     payout_reference=?,
                     completed_at=CURRENT_TIMESTAMP
                 WHERE id=?
-                ''',
+                """,
                 (
-                    res['reference'],
-                    wid
-                )
+                    result[
+                        "reference"
+                    ],
+                    withdrawal_id,
+                ),
             )
 
             c.execute(
-                '''
+                """
                 UPDATE platform_wallet
                 SET
                     pending_withdrawal=
                         pending_withdrawal-?,
-
                     total_withdrawn=
                         total_withdrawn+?,
-
                     updated_at=CURRENT_TIMESTAMP
-
                 WHERE id=1
-                ''',
+                """,
                 (
                     amount,
-                    amount
-                )
+                    amount,
+                ),
             )
 
             c.commit()
@@ -3424,19 +4601,25 @@ def super_withdraw(
             c.close()
 
     return RedirectResponse(
-        '/super-admin',
-        303
+        "/super-admin",
+        303,
     )
 
 
-@app.get('/download/{token}')
-def download(
-    token:str
-):
-    c=get_db()
+# ============================================================
+# SECURE BEAT DOWNLOAD
+# ============================================================
 
-    x=c.execute(
-        '''
+@app.get(
+    "/download/{token}"
+)
+def download(
+    token: str,
+):
+    c = get_db()
+
+    record = c.execute(
+        """
         SELECT
             o.status,
             b.audio_path
@@ -3444,54 +4627,65 @@ def download(
         JOIN beats b
             ON b.id=o.beat_id
         WHERE o.download_token=?
-        ''',
-        (token,)
+        """,
+        (
+            token,
+        ),
     ).fetchone()
 
     c.close()
 
     if (
-        not x
-        or x['status']!='completed'
+        not record
+        or record["status"]
+        != "completed"
     ):
         raise HTTPException(
             403,
-            'Invalid download link.'
+            "Invalid download link.",
         )
 
-    p=(
-        BASE/
-        x['audio_path'].lstrip('/')
+    file_path = (
+        BASE
+        / record[
+            "audio_path"
+        ].lstrip("/")
     ).resolve()
 
+    audio_root = AUDIO.resolve()
+
     if (
-        not p.is_file()
-        or AUDIO.resolve()
-        not in p.parents
+        not file_path.is_file()
+        or audio_root not in file_path.parents
     ):
         raise HTTPException(
             404,
-            'File unavailable.'
+            "File unavailable.",
         )
 
     return FileResponse(
-        p,
-        filename=p.name
+        file_path,
+        filename=file_path.name,
     )
 
 
-@app.post('/mpesa/callback')
+# ============================================================
+# M-PESA CALLBACK
+# ============================================================
+
+@app.post(
+    "/mpesa/callback"
+)
 async def callback(
-    r:Request
+    r: Request,
 ):
-    # Keep the endpoint available for the
-    # real Safaricom callback integration.
-    # Actual live M-Pesa processing remains
-    # intentionally outside this final application
-    # step until the live credentials/callback
-    # configuration are supplied.
+    """
+    Keep the callback endpoint available
+    for the existing Safaricom integration.
+    """
+
     return {
-        'ResultCode':0,
-        'ResultDesc':
-            'Live Safaricom callback integration pending.'
+        "ResultCode": 0,
+        "ResultDesc":
+            "Live Safaricom callback integration pending.",
     }
