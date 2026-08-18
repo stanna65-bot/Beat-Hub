@@ -21,9 +21,7 @@ def get_db():
 def _add(c, table, column, column_type):
     columns = {
         x["name"]
-        for x in c.execute(
-            f"PRAGMA table_info({table})"
-        )
+        for x in c.execute(f"PRAGMA table_info({table})")
     }
 
     if column not in columns:
