@@ -1,0 +1,101 @@
+{% extends 'base.html' %}
+{% block title %}{{album['title']}} — BeatHub{% endblock %}
+
+{% block body %}
+
+<div class="nav">
+    <div>
+        <div class="muted" style="font:12px 'Space Mono'">
+            ALBUM
+        </div>
+
+        <div class="brand">
+            {{album['producer_name']}}
+        </div>
+    </div>
+
+    <a class="btn alt"
+       href="/p/{{album['producer_slug']}}">
+        Back to store
+    </a>
+</div>
+
+<section class="card"
+         style="
+         margin:22px 0;
+         display:grid;
+         grid-template-columns:minmax(220px,320px) 1fr;
+         gap:24px;
+         align-items:start">
+
+    <img
+        src="{{album['cover_path']}}"
+        alt="{{album['title']}} cover"
+        style="
+        width:100%;
+        aspect-ratio:1;
+        object-fit:cover;
+        border-radius:14px">
+
+    <div>
+
+        <div class="muted">
+            ALBUM
+        </div>
+
+        <h1 style="margin:6px 0">
+            {{album['title']}}
+        </h1>
+
+        <p class="muted">
+            {{album['genre']}}
+            ·
+            {{tracks|length}} tracks
+            ·
+            KES {{album['price']}}
+        </p>
+
+        <div style="margin-top:20px">
+
+            {% for t in tracks %}
+
+            <div style="
+                border-top:1px solid var(--line);
+                padding:14px 0;
+                display:grid;
+                grid-template-columns:40px 1fr;
+                gap:12px;
+                align-items:center">
+
+                <b>
+                    {{t['track_number']}}
+                </b>
+
+                <div>
+
+                    <b>
+                        {{t['title']}}
+                    </b>
+
+                    <audio
+                        controls
+                        preload="none"
+                        src="{{t['audio_path']}}"
+                        style="
+                        width:100%;
+                        margin-top:8px">
+                    </audio>
+
+                </div>
+
+            </div>
+
+            {% endfor %}
+
+        </div>
+
+    </div>
+
+</section>
+
+{% endblock %}
