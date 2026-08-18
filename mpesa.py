@@ -1,182 +1,6 @@
-Pasted text.txt
-Document
-confirm this main py for me if the mpesa is functinal or what do i need, then on the dashboard where it says upload beat you can chang to upload beat/ track
-Today 8:42 PM
-Pasted text(1).txt
-Document
-Pasted text(2).txt
-Document
-Pasted text (2).txt
-Document
-Pasted text(3).txt
-Document
-
-Yes. I went through the actual files again, and I found the real compatibility problem.
-
-What was actually wrong
-
-Your current main.py in the file we were working from had no /logout route at all.
-
-But your base.html sends:
-
-<form method="post" action="/logout">
-
-So the browser was correctly sending POST /logout, while FastAPI had no matching route. That is exactly why you were getting:
-
-{"detail":"Not Found"}
-
-There was also a second problem: the mpesa.py stored in your files was actually a copy of main.py, not the M-Pesa module. The proper M-Pesa source we had previously contained the base64a typo, which I corrected to base64.
-
-I fixed both without removing functionality
-
-Updated main.py:
-
-Keeps the full latest BeatHub functionality.
-Keeps producer login/signup.
-Keeps dashboard.
-Keeps uploads.
-Keeps public stores.
-Keeps licensing/orders/wallets.
-Keeps sessions/bookings.
-Keeps withdrawals.
-Keeps password reset.
-Keeps the real M-Pesa callback processing.
-Adds a proper /logout route supporting both GET and POST.
-Clears the session.
-Removes the remembered-email cookie.
-Sends the user to /login.
-Adds no-cache headers so the dashboard isn't displayed from browser cache after logout.
-
-Updated mpesa.py:
-
-Restored the actual M-Pesa module.
-Fixed import base64a → import base64.
-Preserves STK Push.
-Preserves B2C payouts.
-Preserves sandbox/production URL selection.
-Preserves configuration validation.
-Preserves compatibility payout functions.
-
-The latest main already contained the real callback implementation rather than the old "Live Safaricom callback integration pending." placeholder.
-
-Files
-
-Download the updated main.py
-
-Download the corrected mpesa.py
-
-I also ran Python compilation against both files and they pass syntax compilation.
-
-Important: replace the GitHub main.py with this exact main.py, and replace mpesa.py with this exact mpesa.py. Don't paste any explanation around the code into either file.
-
-Your existing base.html can remain with:
-
-<form method="post" action="/logout">
-    <button class="btn alt">Logout</button>
-</form>
-
-because the new /logout explicitly accepts POST.
-
-This is an upgrade/fix, not a downgrade.
-
-main.py
-Code
-mpesa.py
-Code
-this codes are not downgrades
-
-Correct — these are not downgrades.
-
-They are intended as bug-fix/compatibility updates to the version we were working with:
-
-main.py keeps the existing BeatHub application functionality and adds/fixes the missing /logout handling.
-mpesa.py restores the M-Pesa module and fixes the import issue.
-The logout fix is specifically to make your existing base.html form (POST /logout) work instead of returning {"detail":"Not Found"}.
-I did not intentionally remove dashboards, producer accounts, beats, sessions, orders, wallets, withdrawals, password reset, or M-Pesa functionality.
-
-So the goal is:
-
-existing features + fixes → not existing features removed.
-
-One important distinction: I can say these files are not intentionally downgraded, but I would not claim that every feature from every historical chat version is preserved unless we compare against that exact historical source. The files currently available are the authoritative basis for what was fixed.
-
-no, no, no, tripple check the codes you providing why i cant logout still
-
-You're right to make me triple-check it. I found an important weakness in the previous fix.
-
-The logout code is now hardened
-
-Your base.html sends POST /logout, and the updated main.py now explicitly supports both GET and POST:
-
-@app.api_route(
-    "/logout",
-    methods=["GET", "POST"]
-)
-
-It now does three things:
-
-Clears the entire FastAPI session:
-
-r.session.clear()
-
-Explicitly expires the session cookie:
-
-response.delete_cookie(
-    key="session",
-    path="/"
-)
-Redirects to / with aggressive no-cache headers, preventing the browser from showing the old dashboard from cache.
-
-I also confirmed that SessionMiddleware is actually installed in this main.py, so the session mechanism required by logout is present.
-
-The previous logout implementation only registered POST /logout; the new one is more defensive.
-
-I also checked the login behavior
-
-Your /login page redirects to /admin only when auth.current_producer(r) finds a valid producer session.
-
-So after the session is genuinely cleared, /login should not bounce you back to the dashboard.
-
-Files
-
-Use this exact one for Render/GitHub:
-
-Download corrected full main.py
-
-And the M-Pesa module:
-
-Download corrected mpesa.py
-
-Both compile successfully.
-
-One very important thing
-
-If you deploy this exact main.py and clicking Logout still gives {"detail":"Not Found"}, then the problem is not the logout code anymore.
-
-It means Render is not running this main.py (wrong branch, wrong root directory, wrong commit, or deployment hasn't actually picked up the file).
-
-After pushing this file, check Render's deployment commit and make sure it is the new commit—not ff600df, 19c5427, or cb91aca.
-
-Do not keep changing the logout HTML yet. Your existing:
-
-<form method="post" action="/logout">
-    <button class="btn alt">Logout</button>
-</form>
-
-is correct for this route.
-
-main.py
-Code
-mpesa.py
-Code
-
-Library
-/
-mpesa.py
 import os
 import uuid
 import base64
-import hashlib
 from datetime import datetime
 
 import requests
@@ -186,55 +10,55 @@ import requests
 # CONFIGURATION
 # =========================================================
 
-MPESA_MODE = os.getenv("MPESA_MODE", "live").lower()
+MPESA_MODE = os.getenv("MPESA_MODE", "live").strip().lower()
 
-MPESA_CONSUMER_KEY = os.getenv("MPESA_CONSUMER_KEY", "")
-MPESA_CONSUMER_SECRET = os.getenv("MPESA_CONSUMER_SECRET", "")
+MPESA_CONSUMER_KEY = os.getenv("MPESA_CONSUMER_KEY", "").strip()
+MPESA_CONSUMER_SECRET = os.getenv("MPESA_CONSUMER_SECRET", "").strip()
 
-MPESA_SHORTCODE = os.getenv("MPESA_SHORTCODE", "")
-MPESA_PASSKEY = os.getenv("MPESA_PASSKEY", "")
+MPESA_SHORTCODE = os.getenv("MPESA_SHORTCODE", "").strip()
+MPESA_PASSKEY = os.getenv("MPESA_PASSKEY", "").strip()
 
 MPESA_STK_CALLBACK_URL = os.getenv(
     "MPESA_STK_CALLBACK_URL",
     ""
-)
+).strip()
 
 MPESA_B2C_INITIATOR_NAME = os.getenv(
     "MPESA_B2C_INITIATOR_NAME",
     ""
-)
+).strip()
 
 MPESA_B2C_SECURITY_CREDENTIAL = os.getenv(
     "MPESA_B2C_SECURITY_CREDENTIAL",
     ""
-)
+).strip()
 
 MPESA_B2C_COMMAND_ID = os.getenv(
     "MPESA_B2C_COMMAND_ID",
     "BusinessPayment"
-)
+).strip()
 
 MPESA_B2C_RESULT_URL = os.getenv(
     "MPESA_B2C_RESULT_URL",
     ""
-)
+).strip()
 
 MPESA_B2C_TIMEOUT_URL = os.getenv(
     "MPESA_B2C_TIMEOUT_URL",
     ""
-)
+).strip()
 
 MPESA_ENVIRONMENT = os.getenv(
     "MPESA_ENVIRONMENT",
     "production"
-).lower()
+).strip().lower()
 
 
 # =========================================================
 # API URLS
 # =========================================================
 
-if MPESA_ENVIRONMENT == "sandbox":
+if MPESA_ENVIRONMENT in ("sandbox", "test"):
     MPESA_BASE_URL = "https://sandbox.safaricom.co.ke"
 else:
     MPESA_BASE_URL = "https://api.safaricom.co.ke"
@@ -255,13 +79,25 @@ B2C_URL = (
 
 
 # =========================================================
-# PHONE NUMBER
+# PHONE NUMBER NORMALIZATION
 # =========================================================
 
 def normalize_phone(phone):
+    """
+    Convert supported Kenyan phone formats to 254XXXXXXXXX.
+
+    Accepted:
+        0712345678
+        712345678
+        254712345678
+        +254712345678
+    """
+
+    value = str(phone or "").strip()
+
     digits = "".join(
-        c for c in (phone or "")
-        if c.isdigit()
+        char for char in value
+        if char.isdigit()
     )
 
     if digits.startswith("0") and len(digits) == 10:
@@ -278,9 +114,9 @@ def normalize_phone(phone):
             "Enter a valid Kenyan M-Pesa number."
         )
 
-    if not (
-        digits.startswith("2547")
-        and len(digits) == 12
+    if (
+        len(digits) != 12
+        or not digits.startswith("2547")
     ):
         raise ValueError(
             "Enter a valid Kenyan M-Pesa number."
@@ -339,6 +175,11 @@ def _validate_b2c_config():
     )
 
     _require(
+        MPESA_SHORTCODE,
+        "MPESA_SHORTCODE"
+    )
+
+    _require(
         MPESA_B2C_INITIATOR_NAME,
         "MPESA_B2C_INITIATOR_NAME"
     )
@@ -385,24 +226,32 @@ def _get_access_token():
 
     headers = {
         "Authorization": f"Basic {encoded}",
-        "Content-Type": "application/json",
         "Accept": "application/json"
     }
 
-    response = requests.get(
-        OAUTH_URL,
-        headers=headers,
-        timeout=30
-    )
+    try:
+        response = requests.get(
+            OAUTH_URL,
+            headers=headers,
+            timeout=30
+        )
+    except requests.RequestException as exc:
+        raise RuntimeError(
+            f"Could not connect to M-Pesa OAuth: {exc}"
+        ) from exc
+
+    try:
+        data = response.json()
+    except ValueError:
+        data = {
+            "raw_response": response.text
+        }
 
     if response.status_code != 200:
         raise RuntimeError(
             "M-Pesa OAuth failed: "
-            f"{response.status_code} "
-            f"{response.text}"
+            f"{response.status_code} {data}"
         )
-
-    data = response.json()
 
     token = data.get("access_token")
 
@@ -461,14 +310,26 @@ def stk_push(
             "M-Pesa amount must be greater than zero."
         )
 
+    # -----------------------------------------------------
+    # DEVELOPMENT / MOCK MODE
+    # -----------------------------------------------------
+
     if MPESA_MODE == "mock":
         return {
             "checkout_request_id":
                 "MOCK-" + uuid.uuid4().hex,
             "merchant_request_id":
                 "MOCK-MERCHANT-" + uuid.uuid4().hex,
+            "response_code": "0",
+            "response_description": "Mock STK accepted",
+            "customer_message":
+                "Mock payment accepted",
             "simulated": True
         }
+
+    # -----------------------------------------------------
+    # REAL SAFARICOM STK PUSH
+    # -----------------------------------------------------
 
     _validate_stk_config()
 
@@ -512,36 +373,39 @@ def stk_push(
     }
 
     headers = {
-        "Authorization":
-            f"Bearer {token}",
-
-        "Content-Type":
-            "application/json"
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+        "Accept": "application/json"
     }
 
-    response = requests.post(
-        STK_PUSH_URL,
-        json=payload,
-        headers=headers,
-        timeout=30
-    )
+    try:
+        response = requests.post(
+            STK_PUSH_URL,
+            json=payload,
+            headers=headers,
+            timeout=30
+        )
+    except requests.RequestException as exc:
+        raise RuntimeError(
+            f"Could not connect to M-Pesa STK Push: {exc}"
+        ) from exc
 
     try:
         data = response.json()
     except ValueError:
         data = {
-            "raw_response":
-                response.text
+            "raw_response": response.text
         }
 
-    if response.status_code != 200:
+    if response.status_code not in (200, 201):
         raise RuntimeError(
             "M-Pesa STK Push failed: "
-            f"{response.status_code} "
-            f"{data}"
+            f"{response.status_code} {data}"
         )
 
-    if data.get("ResponseCode") not in (
+    response_code = data.get("ResponseCode")
+
+    if response_code not in (
         None,
         "0",
         0
@@ -569,7 +433,7 @@ def stk_push(
             data.get("MerchantRequestID"),
 
         "response_code":
-            data.get("ResponseCode"),
+            response_code,
 
         "response_description":
             data.get("ResponseDescription"),
@@ -605,6 +469,10 @@ def b2c_payout(
             "M-Pesa payout amount must be greater than zero."
         )
 
+    # -----------------------------------------------------
+    # DEVELOPMENT / MOCK MODE
+    # -----------------------------------------------------
+
     if MPESA_MODE == "mock":
         return {
             "reference":
@@ -613,9 +481,19 @@ def b2c_payout(
             "conversation_id":
                 "MOCK-CONVERSATION-" + uuid.uuid4().hex,
 
+            "response_code":
+                "0",
+
+            "response_description":
+                "Mock payout accepted",
+
             "simulated":
                 True
         }
+
+    # -----------------------------------------------------
+    # REAL SAFARICOM B2C
+    # -----------------------------------------------------
 
     _validate_b2c_config()
 
@@ -654,38 +532,37 @@ def b2c_payout(
     }
 
     headers = {
-        "Authorization":
-            f"Bearer {token}",
-
-        "Content-Type":
-            "application/json"
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+        "Accept": "application/json"
     }
 
-    response = requests.post(
-        B2C_URL,
-        json=payload,
-        headers=headers,
-        timeout=30
-    )
+    try:
+        response = requests.post(
+            B2C_URL,
+            json=payload,
+            headers=headers,
+            timeout=30
+        )
+    except requests.RequestException as exc:
+        raise RuntimeError(
+            f"Could not connect to M-Pesa B2C: {exc}"
+        ) from exc
 
     try:
         data = response.json()
     except ValueError:
         data = {
-            "raw_response":
-                response.text
+            "raw_response": response.text
         }
 
-    if response.status_code != 200:
+    if response.status_code not in (200, 201):
         raise RuntimeError(
             "M-Pesa B2C payout failed: "
-            f"{response.status_code} "
-            f"{data}"
+            f"{response.status_code} {data}"
         )
 
-    response_code = data.get(
-        "ResponseCode"
-    )
+    response_code = data.get("ResponseCode")
 
     if response_code not in (
         None,
@@ -699,22 +576,16 @@ def b2c_payout(
 
     return {
         "reference":
-            data.get(
-                "OriginatorConversationID"
-            ),
+            data.get("OriginatorConversationID"),
 
         "conversation_id":
-            data.get(
-                "ConversationID"
-            ),
+            data.get("ConversationID"),
 
         "response_code":
             response_code,
 
         "response_description":
-            data.get(
-                "ResponseDescription"
-            ),
+            data.get("ResponseDescription"),
 
         "simulated":
             False
