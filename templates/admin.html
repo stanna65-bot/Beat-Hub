@@ -1,7 +1,7 @@
 {% extends 'base.html' %}
 
 {% block title %}
-{{producer['name']}} — BeatHub
+{{ producer['name'] }} — BeatHub
 {% endblock %}
 
 {% block body %}
@@ -13,7 +13,7 @@
         </div>
 
         <div class="brand">
-            {{producer['name']}}
+            {{ producer['name'] }}
         </div>
 
         <a
@@ -41,7 +41,10 @@
 </div>
 
 
+<!-- PUBLIC STORE -->
+
 <div class="card" style="margin:22px 0">
+
     <div class="muted">
         YOUR PUBLIC STORE
     </div>
@@ -51,69 +54,79 @@
             font-family:'Space Mono';
             color:var(--teal);
             margin-top:8px;
-            word-break:break-all
+            word-break:break-all;
         "
     >
-        {{request.url.scheme}}://{{request.url.netloc}}/p/{{producer['slug']}}
+        {{ request.url.scheme }}://{{ request.url.netloc }}/p/{{ producer['slug'] }}
     </div>
+
 </div>
 
+
+<!-- STATS -->
 
 <div
     style="
         display:grid;
         grid-template-columns:repeat(4,minmax(150px,1fr));
         gap:12px;
-        margin:20px 0
+        margin:20px 0;
     "
 >
 
     <div class="card">
+
         <div class="muted">
             AVAILABLE BALANCE
         </div>
 
         <h2>
-            KES {{totals['available_balance']}}
+            KES {{ totals['available_balance'] }}
         </h2>
 
         <small class="muted">
             Ready for withdrawal
         </small>
+
     </div>
 
 
     <div class="card">
+
         <div class="muted">
             TOTAL EARNINGS
         </div>
 
         <h2>
-            KES {{totals['total_earnings']}}
+            KES {{ totals['total_earnings'] }}
         </h2>
 
         <small class="muted">
             Your net earnings
         </small>
+
     </div>
 
 
     <div class="card">
+
         <div class="muted">
             WITHDRAWN
         </div>
 
         <h2>
-            KES {{totals['total_withdrawn']}}
+            KES {{ totals['total_withdrawn'] }}
         </h2>
 
         <small class="muted">
             Paid to M-Pesa
         </small>
+
     </div>
 
 
     <div class="card">
+
         <div class="muted">
             PUBLIC PROFILE
         </div>
@@ -124,24 +137,27 @@
 
         <a
             class="btn alt"
-            href="/p/{{producer['slug']}}"
+            href="/p/{{ producer['slug'] }}"
         >
             View store
         </a>
+
     </div>
 
 </div>
 
 
+<!-- PROFILE / UPLOAD -->
+
 <div
     style="
         display:grid;
         grid-template-columns:1fr 1fr;
-        gap:18px
+        gap:18px;
     "
 >
 
-    <!-- PROFILE & PAYOUTS -->
+    <!-- PROFILE -->
 
     <section class="card">
 
@@ -160,8 +176,9 @@
 
             <input
                 name="name"
-                value="{{producer['name']}}"
+                value="{{ producer['name'] }}"
                 required
+                autocomplete="name"
             >
 
 
@@ -169,7 +186,10 @@
                 Bio
             </label>
 
-            <textarea name="bio">{{producer['bio']}}</textarea>
+            <textarea
+                name="bio"
+                rows="5"
+            >{{ producer['bio'] }}</textarea>
 
 
             <label>
@@ -178,7 +198,8 @@
 
             <input
                 name="phone"
-                value="{{producer['phone']}}"
+                value="{{ producer['phone'] }}"
+                autocomplete="tel"
             >
 
 
@@ -188,12 +209,17 @@
 
             <input
                 name="payout_phone"
-                value="{{producer['payout_phone']}}"
+                value="{{ producer['payout_phone'] }}"
                 placeholder="07XXXXXXXX"
+                inputmode="tel"
+                autocomplete="tel"
             >
 
 
-            <button class="btn">
+            <button
+                type="submit"
+                class="btn"
+            >
                 Save profile
             </button>
 
@@ -220,11 +246,16 @@
                 name="amount"
                 type="number"
                 min="10"
+                step="1"
                 required
                 placeholder="KES"
+                inputmode="numeric"
             >
 
-            <button class="btn">
+            <button
+                type="submit"
+                class="btn"
+            >
                 Request withdrawal
             </button>
 
@@ -233,7 +264,7 @@
     </section>
 
 
-    <!-- UPLOAD BEAT / TRACK -->
+    <!-- UPLOAD -->
 
     <section class="card">
 
@@ -258,6 +289,7 @@
             <input
                 name="title"
                 required
+                autocomplete="off"
             >
 
 
@@ -280,6 +312,8 @@
                 type="number"
                 min="20"
                 max="400"
+                step="1"
+                inputmode="numeric"
             >
 
 
@@ -291,7 +325,9 @@
                 name="price"
                 type="number"
                 min="1"
+                step="1"
                 required
+                inputmode="numeric"
             >
 
 
@@ -300,7 +336,8 @@
                     display:flex;
                     gap:8px;
                     align-items:center;
-                    text-transform:none
+                    text-transform:none;
+                    cursor:pointer;
                 "
             >
 
@@ -340,7 +377,10 @@
             >
 
 
-            <button class="btn">
+            <button
+                type="submit"
+                class="btn"
+            >
                 Publish Beat / Track
             </button>
 
@@ -351,18 +391,18 @@
 </div>
 
 
-<!-- SESSION SERVICES & AVAILABILITY -->
+<!-- SERVICES / AVAILABILITY -->
 
 <div
     style="
         display:grid;
         grid-template-columns:1fr 1fr;
         gap:18px;
-        margin-top:18px
+        margin-top:18px;
     "
 >
 
-    <!-- SESSION SERVICES -->
+    <!-- SERVICES -->
 
     <section class="card">
 
@@ -393,7 +433,10 @@
                 Description
             </label>
 
-            <textarea name="description"></textarea>
+            <textarea
+                name="description"
+                rows="4"
+            ></textarea>
 
 
             <label>
@@ -405,7 +448,9 @@
                 type="number"
                 min="15"
                 max="720"
+                step="15"
                 required
+                inputmode="numeric"
             >
 
 
@@ -417,7 +462,9 @@
                 name="price"
                 type="number"
                 min="1"
+                step="1"
                 required
+                inputmode="numeric"
             >
 
 
@@ -431,7 +478,10 @@
             >
 
 
-            <button class="btn">
+            <button
+                type="submit"
+                class="btn"
+            >
                 Add service
             </button>
 
@@ -443,28 +493,51 @@
         <div
             style="
                 border-top:1px solid var(--line);
-                padding:12px 0
+                padding:14px 0;
             "
         >
 
             <b>
-                {{s.title}}
+                {{ s.title }}
             </b>
 
-            <div class="muted">
-                {{s.duration_minutes}}
-                min · KES {{s.price}}
-                · {{s.location}}
+            {% if s.description %}
+            <div
+                class="muted"
+                style="margin-top:5px"
+            >
+                {{ s.description }}
+            </div>
+            {% endif %}
+
+            <div
+                class="muted"
+                style="margin-top:5px"
+            >
+                {{ s.duration_minutes }}
+                min
+                ·
+                KES {{ s.price }}
+                {% if s.location %}
+                ·
+                {{ s.location }}
+                {% endif %}
             </div>
 
         </div>
+
+        {% else %}
+
+        <p class="muted">
+            No session services yet.
+        </p>
 
         {% endfor %}
 
     </section>
 
 
-    <!-- WEEKLY AVAILABILITY -->
+    <!-- AVAILABILITY -->
 
     <section class="card">
 
@@ -481,7 +554,7 @@
                 Day
             </label>
 
-            <select name="weekday">
+            <select name="weekday" required>
 
                 <option value="0">
                     Monday
@@ -546,10 +619,16 @@
                 value="60"
                 min="15"
                 max="240"
+                step="15"
+                required
+                inputmode="numeric"
             >
 
 
-            <button class="btn">
+            <button
+                type="submit"
+                class="btn"
+            >
                 Save availability
             </button>
 
@@ -558,28 +637,45 @@
 
         {% for a in availability %}
 
+        <div
+            style="
+                border-top:1px solid var(--line);
+                padding:12px 0;
+            "
+        >
+
+            <span class="muted">
+
+                {{
+                    [
+                        'Monday',
+                        'Tuesday',
+                        'Wednesday',
+                        'Thursday',
+                        'Friday',
+                        'Saturday',
+                        'Sunday'
+                    ][a.weekday]
+                }}
+
+                :
+                {{ a.start_time }}
+                –
+                {{ a.end_time }}
+
+                ·
+
+                {{ a.slot_minutes }}
+                min slots
+
+            </span>
+
+        </div>
+
+        {% else %}
+
         <p class="muted">
-
-            {{[
-                'Monday',
-                'Tuesday',
-                'Wednesday',
-                'Thursday',
-                'Friday',
-                'Saturday',
-                'Sunday'
-            ][a.weekday]}}
-
-            :
-            {{a.start_time}}
-            –
-            {{a.end_time}}
-
-            ·
-
-            {{a.slot_minutes}}
-            min slots
-
+            No availability configured yet.
         </p>
 
         {% endfor %}
@@ -604,62 +700,70 @@
 
         <table>
 
-            <tr>
-                <th>Client</th>
-                <th>Service</th>
-                <th>Time</th>
-                <th>Status</th>
-                <th></th>
-            </tr>
+            <thead>
+
+                <tr>
+                    <th>Client</th>
+                    <th>Service</th>
+                    <th>Time</th>
+                    <th>Status</th>
+                    <th></th>
+                </tr>
+
+            </thead>
 
 
-            {% for b in bookings %}
+            <tbody>
 
-            <tr>
+                {% for b in bookings %}
 
-                <td>
-                    {{b.client_name}}
-                </td>
+                <tr>
 
-                <td>
-                    {{b.service_title}}
-                </td>
+                    <td>
+                        {{ b.client_name }}
+                    </td>
 
-                <td>
-                    {{b.start_at}}
-                </td>
+                    <td>
+                        {{ b.service_title }}
+                    </td>
 
-                <td>
-                    {{b.status}}
-                </td>
+                    <td>
+                        {{ b.start_at }}
+                    </td>
 
-                <td>
+                    <td>
+                        {{ b.status }}
+                    </td>
 
-                    <a
-                        class="btn alt"
-                        href="/booking/{{b.id}}"
+                    <td>
+
+                        <a
+                            class="btn alt"
+                            href="/booking/{{ b.id }}"
+                        >
+                            Open
+                        </a>
+
+                    </td>
+
+                </tr>
+
+                {% else %}
+
+                <tr>
+
+                    <td
+                        colspan="5"
+                        class="muted"
                     >
-                        Open
-                    </a>
+                        No bookings yet.
+                    </td>
 
-                </td>
+                </tr>
 
-            </tr>
+                {% endfor %}
 
-            {% else %}
-
-            <tr>
-
-                <td
-                    colspan="5"
-                    class="muted"
-                >
-                    No bookings yet.
-                </td>
-
-            </tr>
-
-            {% endfor %}
+            </tbody>
 
         </table>
 
@@ -686,18 +790,21 @@
         style="
             display:flex;
             justify-content:space-between;
+            align-items:center;
+            gap:15px;
             border-bottom:1px solid var(--line);
-            padding:12px 0
+            padding:12px 0;
         "
     >
 
         <span>
-            KES {{w.amount}}
-            · {{w.phone}}
+            KES {{ w.amount }}
+            ·
+            {{ w.phone }}
         </span>
 
         <b>
-            {{w.status}}
+            {{ w.status }}
         </b>
 
     </div>
@@ -721,11 +828,19 @@
 >
 
     <h2>
-        Your catalogue · {{beats|length}}
+        Your catalogue · {{ beats|length }}
     </h2>
 
 
-    <div class="grid">
+    <div
+        class="grid"
+        style="
+            display:grid;
+            grid-template-columns:repeat(auto-fill,minmax(220px,1fr));
+            gap:16px;
+            margin-top:15px;
+        "
+    >
 
         {% for b in beats %}
 
@@ -733,16 +848,20 @@
             style="
                 border:1px solid var(--line);
                 border-radius:12px;
-                overflow:hidden
+                overflow:hidden;
+                background:var(--card);
             "
         >
 
             <img
-                src="{{b.cover_path}}"
+                src="{{ b.cover_path }}"
+                alt="{{ b.title }}"
+                loading="lazy"
                 style="
                     width:100%;
                     aspect-ratio:1;
-                    object-fit:cover
+                    object-fit:cover;
+                    display:block;
                 "
             >
 
@@ -750,7 +869,7 @@
             <div style="padding:12px">
 
                 <b>
-                    {{b.title}}
+                    {{ b.title }}
                 </b>
 
 
@@ -760,7 +879,7 @@
                     style="
                         color:var(--gold);
                         font-size:12px;
-                        margin-top:5px
+                        margin-top:5px;
                     "
                 >
                     🔥 HOT PICK
@@ -773,16 +892,21 @@
                     class="muted"
                     style="margin:6px 0"
                 >
-                    {{b.genre}}
+
+                    {% if b.genre %}
+                    {{ b.genre }}
                     ·
-                    KES {{b.price}}
+                    {% endif %}
+
+                    KES {{ b.price }}
+
                 </div>
 
 
                 <audio
                     controls
                     preload="none"
-                    src="{{b.audio_path}}"
+                    src="{{ b.audio_path }}"
                     style="width:100%"
                 ></audio>
 
@@ -802,5 +926,30 @@
     </div>
 
 </section>
+
+
+<style>
+
+@media (max-width: 900px) {
+
+    div[style*="grid-template-columns:repeat(4"] {
+        grid-template-columns:repeat(2,minmax(140px,1fr)) !important;
+    }
+
+    div[style*="grid-template-columns:1fr 1fr"] {
+        grid-template-columns:1fr !important;
+    }
+
+}
+
+@media (max-width: 600px) {
+
+    div[style*="grid-template-columns:repeat(4"] {
+        grid-template-columns:1fr !important;
+    }
+
+}
+
+</style>
 
 {% endblock %}
