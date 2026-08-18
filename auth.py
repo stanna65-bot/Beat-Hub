@@ -11,17 +11,12 @@ from database import get_db
 ITERATIONS = 300_000
 
 
-def hash_password(password):
-    if password is None:
-        raise ValueError("Password is required.")
-
-    password = str(password)
-
+def hash_password(password: str) -> str:
     salt = os.urandom(16)
 
     digest = hashlib.pbkdf2_hmac(
         "sha256",
-        password.encode("utf-8"),
+        password.encode(),
         salt,
         ITERATIONS
     )
@@ -29,170 +24,53 @@ def hash_password(password):
     return f"{salt.hex()}${digest.hex()}"
 
 
-def verify_password(password, stored):
-    """
-    Verify current BeatHub PBKDF2 hashes and compatible
-    legacy password formats.
-    """
-
-    if password is None or stored is None:
-        return False
-
+def verify_password(password: str, stored: str) -> bool:
     try:
-        stored = str(stored).strip()
+        salt, digest = stored.split("$", 1)
 
-        if not stored:
-            return False
+        calculated = hashlib.pbkdf2_hmac(
+            "sha256",
+            password.encode(),
+            bytes.fromhex(salt),
+            ITERATIONS
+        ).hex()
 
-        # -------------------------------------------------
-        # Current BeatHub format:
-        # salt_hex$digest_hex
-        # -------------------------------------------------
-        if stored.count("$") == 1:
-            salt_hex, digest_hex = stored.split("$", 1)
-
-            try:
-                salt = bytes.fromhex(salt_hex)
-            except ValueError:
-                return False
-
-            if len(salt) != 16:
-                return False
-
-            if len(digest_hex) != 64:
-                return False
-
-            got = hashlib.pbkdf2_hmac(
-                "sha256",
-                str(password).encode("utf-8"),
-                salt,
-                ITERATIONS
-            ).hex()
-
-            return hmac.compare_digest(
-                got,
-                digest_hex
-            )
-
-        # -------------------------------------------------
-        # Legacy Django-style PBKDF2 format:
-        # pbkdf2_sha256$iterations$salt$hash
-        # -------------------------------------------------
-        parts = stored.split("$")
-
-        if (
-            len(parts) == 4
-            and parts[0].lower() == "pbkdf2_sha256"
-        ):
-            try:
-                rounds = int(parts[1])
-            except (TypeError, ValueError):
-                return False
-
-            if rounds <= 0:
-                return False
-
-            salt = parts[2]
-            expected = parts[3]
-
-            got = hashlib.pbkdf2_hmac(
-                "sha256",
-                str(password).encode("utf-8"),
-                salt.encode("utf-8"),
-                rounds
-            )
-
-            import base64
-
-            encoded = (
-                base64.b64encode(got)
-                .decode("ascii")
-                .rstrip("=")
-            )
-
-            return hmac.compare_digest(
-                encoded,
-                expected
-            )
-
-        # -------------------------------------------------
-        # Legacy bcrypt
-        # -------------------------------------------------
-        if stored.startswith(
-            ("$2a$", "$2b$", "$2y$")
-        ):
-            try:
-                import bcrypt
-
-                return bool(
-                    bcrypt.checkpw(
-                        str(password).encode("utf-8"),
-                        stored.encode("utf-8")
-                    )
-                )
-
-            except Exception:
-                return False
-
-        return False
+        return hmac.compare_digest(
+            calculated,
+            digest
+        )
 
     except Exception:
         return False
 
 
 def current_producer(request: Request):
-    """
-    Resolve the currently authenticated producer from
-    the signed Starlette session.
-    """
+    producer_id = request.session.get("producer_id")
 
-    raw_id = request.session.get(
-        "producer_id"
-    )
-
-    try:
-        pid = int(raw_id)
-    except (TypeError, ValueError):
+    if not producer_id:
         return None
 
-    if pid <= 0:
-        return None
-
-    conn = get_db()
+    c = get_db()
 
     try:
-        return conn.execute(
+        return c.execute(
             """
             SELECT *
             FROM producers
             WHERE id=?
             LIMIT 1
             """,
-            (pid,)
+            (producer_id,)
         ).fetchone()
 
     finally:
-        conn.close()
+        c.close()
 
 
 def require_producer(request: Request):
-    """
-    Require an authenticated producer.
-    """
-
     producer = current_producer(request)
 
-    if producer is None:
-        request.session.pop(
-            "producer_id",
-            None
-        )
-
-        request.session.pop(
-            "remember_me",
-            None
-        )
-
+    if not producer:
         raise HTTPException(
             status_code=401,
             detail="Login required"
@@ -201,27 +79,13 @@ def require_producer(request: Request):
     return producer
 
 
-def is_super_admin(request: Request):
-    """
-    Check Super Admin session state.
-    """
-
-    return (
-        request.session.get(
-            "super_admin"
-        ) is True
-        and
-        request.session.get(
-            "role"
-        ) == "super_admin"
+def is_super_admin(request: Request) -> bool:
+    return bool(
+        request.session.get("super_admin")
     )
 
 
 def require_super_admin(request: Request):
-    """
-    Require an authenticated Super Admin.
-    """
-
     if not is_super_admin(request):
         raise HTTPException(
             status_code=401,
@@ -231,25 +95,11 @@ def require_super_admin(request: Request):
     return True
 
 
-def token_hash(token):
-    """
-    SHA-256 hash for password-reset or other
-    single-use tokens.
-    """
-
-    if token is None:
-        raise ValueError(
-            "Token is required."
-        )
-
-    return hashlib.sha256(
-        str(token).encode("utf-8")
-    ).hexdigest()
-
-
 def new_token():
-    """
-    Generate a cryptographically secure token.
-    """
-
     return secrets.token_urlsafe(32)
+
+
+def token_hash(token):
+    return hashlib.sha256(
+        token.encode()
+    ).hexdigest()
