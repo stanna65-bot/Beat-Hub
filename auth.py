@@ -1,4 +1,3 @@
-import base64
 import hashlib
 import hmac
 import os
@@ -13,6 +12,11 @@ ITERATIONS = 300_000
 
 
 def hash_password(password):
+    if password is None:
+        raise ValueError("Password is required.")
+
+    password = str(password)
+
     salt = os.urandom(16)
 
     digest = hashlib.pbkdf2_hmac(
@@ -27,8 +31,8 @@ def hash_password(password):
 
 def verify_password(password, stored):
     """
-    Verify current BeatHub password hashes and compatible
-    legacy PBKDF2/Bcrypt hashes.
+    Verify current BeatHub PBKDF2 hashes and compatible
+    legacy password formats.
     """
 
     if password is None or stored is None:
@@ -40,12 +44,17 @@ def verify_password(password, stored):
         if not stored:
             return False
 
+        # -------------------------------------------------
         # Current BeatHub format:
         # salt_hex$digest_hex
+        # -------------------------------------------------
         if stored.count("$") == 1:
             salt_hex, digest_hex = stored.split("$", 1)
 
-            salt = bytes.fromhex(salt_hex)
+            try:
+                salt = bytes.fromhex(salt_hex)
+            except ValueError:
+                return False
 
             if len(salt) != 16:
                 return False
@@ -55,7 +64,7 @@ def verify_password(password, stored):
 
             got = hashlib.pbkdf2_hmac(
                 "sha256",
-                password.encode("utf-8"),
+                str(password).encode("utf-8"),
                 salt,
                 ITERATIONS
             ).hex()
@@ -65,24 +74,35 @@ def verify_password(password, stored):
                 digest_hex
             )
 
-        # Compatible Django-style PBKDF2 format:
-        # pbkdf2_sha256$rounds$salt$hash
+        # -------------------------------------------------
+        # Legacy Django-style PBKDF2 format:
+        # pbkdf2_sha256$iterations$salt$hash
+        # -------------------------------------------------
         parts = stored.split("$")
 
         if (
             len(parts) == 4
             and parts[0].lower() == "pbkdf2_sha256"
         ):
-            rounds = int(parts[1])
+            try:
+                rounds = int(parts[1])
+            except (TypeError, ValueError):
+                return False
+
+            if rounds <= 0:
+                return False
+
             salt = parts[2]
             expected = parts[3]
 
             got = hashlib.pbkdf2_hmac(
                 "sha256",
-                password.encode("utf-8"),
+                str(password).encode("utf-8"),
                 salt.encode("utf-8"),
                 rounds
             )
+
+            import base64
 
             encoded = (
                 base64.b64encode(got)
@@ -95,20 +115,18 @@ def verify_password(password, stored):
                 expected
             )
 
-        # Compatible bcrypt hashes.
+        # -------------------------------------------------
+        # Legacy bcrypt
+        # -------------------------------------------------
         if stored.startswith(
-            (
-                "$2a$",
-                "$2b$",
-                "$2y$"
-            )
+            ("$2a$", "$2b$", "$2y$")
         ):
             try:
                 import bcrypt
 
                 return bool(
                     bcrypt.checkpw(
-                        password.encode("utf-8"),
+                        str(password).encode("utf-8"),
                         stored.encode("utf-8")
                     )
                 )
@@ -123,11 +141,17 @@ def verify_password(password, stored):
 
 
 def current_producer(request: Request):
-    raw_id = request.session.get("producer_id")
+    """
+    Resolve the currently authenticated producer from
+    the signed Starlette session.
+    """
+
+    raw_id = request.session.get(
+        "producer_id"
+    )
 
     try:
         pid = int(raw_id)
-
     except (TypeError, ValueError):
         return None
 
@@ -152,9 +176,13 @@ def current_producer(request: Request):
 
 
 def require_producer(request: Request):
+    """
+    Require an authenticated producer.
+    """
+
     producer = current_producer(request)
 
-    if not producer:
+    if producer is None:
         request.session.pop(
             "producer_id",
             None
@@ -166,35 +194,62 @@ def require_producer(request: Request):
         )
 
         raise HTTPException(
-            401,
-            "Login required"
+            status_code=401,
+            detail="Login required"
         )
 
     return producer
 
 
 def is_super_admin(request: Request):
+    """
+    Check Super Admin session state.
+    """
+
     return (
-        request.session.get("super_admin") is True
-        and request.session.get("role") == "super_admin"
+        request.session.get(
+            "super_admin"
+        ) is True
+        and
+        request.session.get(
+            "role"
+        ) == "super_admin"
     )
 
 
 def require_super_admin(request: Request):
+    """
+    Require an authenticated Super Admin.
+    """
+
     if not is_super_admin(request):
         raise HTTPException(
-            401,
-            "Super admin login required"
+            status_code=401,
+            detail="Super admin login required"
         )
 
     return True
 
 
 def token_hash(token):
+    """
+    SHA-256 hash for password-reset or other
+    single-use tokens.
+    """
+
+    if token is None:
+        raise ValueError(
+            "Token is required."
+        )
+
     return hashlib.sha256(
-        token.encode("utf-8")
+        str(token).encode("utf-8")
     ).hexdigest()
 
 
 def new_token():
+    """
+    Generate a cryptographically secure token.
+    """
+
     return secrets.token_urlsafe(32)
